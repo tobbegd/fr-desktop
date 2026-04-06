@@ -13,6 +13,10 @@ export interface Prefs {
   email: string;
   tier: string;
   launchCount: number;
+  dbEtag: string;
+  dbSha256: string;
+  dbPath: string;
+  offlineLogins: number;
 }
 
 const defaults: Prefs = {
@@ -21,6 +25,10 @@ const defaults: Prefs = {
   email: "",
   tier: "",
   launchCount: 0,
+  dbEtag: "",
+  dbSha256: "",
+  dbPath: "",
+  offlineLogins: 0,
 };
 
 export async function loadPrefs(): Promise<Prefs> {

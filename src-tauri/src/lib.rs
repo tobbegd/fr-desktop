@@ -1,4 +1,10 @@
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::AsyncWriteExt;
+
+// ---- Auth verify ----
 
 #[derive(Serialize, Deserialize)]
 struct VerifyResult {
@@ -18,7 +24,9 @@ async fn verify_license(server_url: String, api_key: String) -> Result<VerifyRes
 
     match resp.status() {
         reqwest::StatusCode::UNAUTHORIZED => return Err("401: Ogiltig API-nyckel".to_string()),
-        reqwest::StatusCode::PAYMENT_REQUIRED => return Err("402: Prenumerationen har gått ut".to_string()),
+        reqwest::StatusCode::PAYMENT_REQUIRED => {
+            return Err("402: Prenumerationen har gått ut".to_string())
+        }
         s if !s.is_success() => return Err(format!("Serverfel: {}", s)),
         _ => {}
     }
@@ -26,12 +34,212 @@ async fn verify_license(server_url: String, api_key: String) -> Result<VerifyRes
     resp.json::<VerifyResult>().await.map_err(|e| e.to_string())
 }
 
+// ---- Manifest check ----
+
+#[derive(Deserialize)]
+struct ManifestFileEntry {
+    name: String,
+    size: i64,
+    sha256: String,
+}
+
+#[derive(Deserialize)]
+struct ManifestResponse {
+    files: HashMap<String, ManifestFileEntry>,
+}
+
+#[derive(Serialize)]
+struct DbFileInfo {
+    name: String,
+    size: i64,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+struct ManifestCheckResult {
+    needs_update: bool,
+    file: Option<DbFileInfo>,
+    etag: String,
+}
+
+fn tier_to_manifest_key(tier: &str) -> &str {
+    if tier == "desktop" {
+        "pro"
+    } else {
+        tier
+    }
+}
+
+#[tauri::command]
+async fn check_manifest(
+    server_url: String,
+    tier: String,
+    current_etag: String,
+    current_sha256: String,
+) -> Result<ManifestCheckResult, String> {
+    let client = reqwest::Client::new();
+    let mut req = client.get(format!("{}/api/manifest", server_url));
+    if !current_etag.is_empty() {
+        req = req.header("If-None-Match", current_etag.clone());
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+
+    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(ManifestCheckResult {
+            needs_update: false,
+            file: None,
+            etag: current_etag,
+        });
+    }
+
+    if !resp.status().is_success() {
+        return Err(format!("Serverfel: {}", resp.status()));
+    }
+
+    let etag = resp
+        .headers()
+        .get("ETag")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let manifest: ManifestResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let key = tier_to_manifest_key(&tier);
+    let entry = manifest
+        .files
+        .get(key)
+        .ok_or_else(|| format!("Ingen fil tillgänglig för tier '{}'", tier))?;
+
+    let needs_update = entry.sha256 != current_sha256;
+
+    Ok(ManifestCheckResult {
+        needs_update,
+        file: if needs_update {
+            Some(DbFileInfo {
+                name: entry.name.clone(),
+                size: entry.size,
+                sha256: entry.sha256.clone(),
+            })
+        } else {
+            None
+        },
+        etag,
+    })
+}
+
+// ---- Download ----
+
+#[derive(Serialize, Clone)]
+struct DownloadProgress {
+    downloaded: u64,
+    total: u64,
+}
+
+#[tauri::command]
+async fn download_db(
+    app: AppHandle,
+    server_url: String,
+    api_key: String,
+    expected_sha256: String,
+    file_name: String,
+) -> Result<String, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/download", server_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match resp.status() {
+        reqwest::StatusCode::UNAUTHORIZED => return Err("401: Ogiltig API-nyckel".to_string()),
+        reqwest::StatusCode::PAYMENT_REQUIRED => {
+            return Err("402: Prenumerationen har gått ut".to_string())
+        }
+        s if !s.is_success() => return Err(format!("Serverfel: {}", s)),
+        _ => {}
+    }
+
+    let total = resp.content_length().unwrap_or(0);
+    let temp_path = data_dir.join("download.tmp");
+    let mut out_file = tokio::fs::File::create(&temp_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut downloaded = 0u64;
+    let mut hasher = sha2::Sha256::new();
+    let mut response = resp;
+
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        out_file
+            .write_all(&chunk)
+            .await
+            .map_err(|e| e.to_string())?;
+        hasher.update(&chunk);
+        downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgress { downloaded, total },
+        );
+    }
+
+    let computed = format!("{:x}", hasher.finalize());
+    if computed != expected_sha256 {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err("SHA256-kontroll misslyckades – filen kan vara skadad".to_string());
+    }
+
+    let final_path = if file_name.ends_with(".zip") {
+        let out_path = data_dir.join("foretagsdatabasen.sqlite");
+        let tmp = temp_path.clone();
+        let out = out_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let f = std::fs::File::open(&tmp).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+                let name = entry.name().to_string();
+                if name.ends_with(".sqlite") || name.ends_with(".db") {
+                    let mut dst =
+                        std::fs::File::create(&out).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut entry, &mut dst).map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
+            }
+            Err("Ingen .sqlite-fil hittades i zip-arkivet".to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        out_path
+    } else {
+        let out_path = data_dir.join("foretagsdatabasen.sqlite");
+        tokio::fs::rename(&temp_path, &out_path)
+            .await
+            .map_err(|e| e.to_string())?;
+        out_path
+    };
+
+    final_path
+        .to_str()
+        .ok_or_else(|| "Ogiltig sökväg".to_string())
+        .map(|s| s.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![verify_license])
+        .invoke_handler(tauri::generate_handler![
+            verify_license,
+            check_manifest,
+            download_db
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
