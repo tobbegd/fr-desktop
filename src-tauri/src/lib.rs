@@ -230,6 +230,62 @@ async fn download_db(
         .map(|s| s.to_string())
 }
 
+// ---- Query DB ----
+
+#[derive(Serialize)]
+struct QueryResult {
+    columns: Vec<String>,
+    rows: Vec<Vec<serde_json::Value>>,
+    truncated: bool,
+}
+
+const MAX_ROWS: usize = 200;
+
+#[tauri::command]
+async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let columns: Vec<String> = stmt.column_names().iter().map(|&s| s.to_string()).collect();
+        let col_count = columns.len();
+
+        let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let mut raw = stmt.query([]).map_err(|e| e.to_string())?;
+        let mut truncated = false;
+
+        while let Some(row) = raw.next().map_err(|e| e.to_string())? {
+            if rows.len() >= MAX_ROWS {
+                truncated = true;
+                break;
+            }
+            let mut values = Vec::with_capacity(col_count);
+            for i in 0..col_count {
+                let val = match row.get_ref(i).map_err(|e| e.to_string())? {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(n) => serde_json::json!(n),
+                    rusqlite::types::ValueRef::Real(f) => {
+                        serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or_else(|| serde_json::Value::String(f.to_string()))
+                    }
+                    rusqlite::types::ValueRef::Text(s) => {
+                        serde_json::Value::String(String::from_utf8_lossy(s).to_string())
+                    }
+                    rusqlite::types::ValueRef::Blob(b) => {
+                        serde_json::Value::String(format!("<blob {} bytes>", b.len()))
+                    }
+                };
+                values.push(val);
+            }
+            rows.push(values);
+        }
+
+        Ok(QueryResult { columns, rows, truncated })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -238,7 +294,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             verify_license,
             check_manifest,
-            download_db
+            download_db,
+            query_db
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { fade } from "svelte/transition";
   import Settings from "$lib/Settings.svelte";
+  import SearchArea from "$lib/SearchArea.svelte";
   import { loadPrefs, savePrefs } from "$lib/store";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
 
@@ -20,6 +21,7 @@
   // Sparade DB-prefs
   let dbEtag = $state("");
   let dbSha256 = $state("");
+  let dbPath = $state("");
 
   // Offline-inloggningar (nödläge)
   const OFFLINE_MAX = 2;
@@ -44,6 +46,7 @@
     if (p.tier) tier = p.tier;
     if (p.dbEtag) dbEtag = p.dbEtag;
     if (p.dbSha256) dbSha256 = p.dbSha256;
+    if (p.dbPath) dbPath = p.dbPath;
     offlineLogins = p.offlineLogins ?? 0;
 
     if (p.apiKey) {
@@ -158,16 +161,17 @@
     );
 
     try {
-      const dbPath = await invoke<string>("download_db", {
+      const downloadedPath = await invoke<string>("download_db", {
         serverUrl,
         apiKey,
         expectedSha256: updateFile.sha256,
         fileName: updateFile.name,
       });
       log(`Databas sparad: ${dbPath}`);
-      await savePrefs({ dbEtag: updateEtag, dbSha256: updateFile.sha256, dbPath });
+      await savePrefs({ dbEtag: updateEtag, dbSha256: updateFile.sha256, dbPath: downloadedPath });
       dbEtag = updateEtag;
       dbSha256 = updateFile.sha256;
+      dbPath = downloadedPath;
       updateAvailable = false;
       updateFile = null;
       showStatus("Databasen är uppdaterad.", "success");
@@ -339,9 +343,6 @@
       </div>
     {/if}
 
-    <!-- Huvud-UI -->
-    <main class="flex-1 flex flex-col p-4 gap-3">
-      <p class="text-zinc-500 text-sm">Sök-UI kommer här</p>
-    </main>
+    <SearchArea {dbPath} />
   </div>
 {/if}
