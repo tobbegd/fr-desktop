@@ -8,11 +8,13 @@
   type Snippet = { id: string; name: string; sql: string };
 
   const predefined: Snippet[] = [
-    { id: "pre_1", name: "Alla rader (100)", sql: "SELECT *\nFROM bolag\nLIMIT 100" },
-    { id: "pre_2", name: "Räkna rader", sql: "SELECT COUNT(*) AS antal\nFROM bolag" },
+    { id: "pre_1", name: "Alla bolag (100)", sql: "SELECT *\nFROM bolag\nLIMIT 100" },
+    { id: "pre_2", name: "Räkna bolag", sql: "SELECT COUNT(*) AS antal\nFROM bolag" },
     { id: "pre_3", name: "Sök på namn", sql: "SELECT *\nFROM bolag\nWHERE orgnamn LIKE '%sök%'\nLIMIT 100" },
-    { id: "pre_4", name: "Visa tabeller", sql: "SELECT name\nFROM sqlite_master\nWHERE type='table'\nORDER BY name" },
-    { id: "pre_5", name: "Bolag med webbplats", sql: "SELECT orgnamn, webbplats\nFROM bolag\nWHERE webbplats IS NOT NULL AND webbplats != ''\nLIMIT 100" },
+    { id: "pre_4", name: "Bolag med webbplats", sql: "SELECT b.orgnr, b.orgnamn, w.domain, w.email, w.phone\nFROM bolag b\nJOIN webbplatser w ON w.orgnr = b.orgnr\nWHERE b.orgnamn LIKE '%Bil%'\n  AND w.phone IS NOT NULL AND w.phone != ''\nLIMIT 100" },
+    { id: "pre_5", name: "Bolag med SNI-bransch", sql: "SELECT orgnr, orgnamn, sni_1, sni_1_namn, postort\nFROM bolag\nWHERE sni_1 != ''\nLIMIT 100" },
+    { id: "pre_6", name: "Årsredovisningar senaste år", sql: "SELECT b.orgnamn, a.rakenskapsar_slut, a.nettoomsattning,\n       a.arets_resultat, a.medelantal_anstallda\nFROM arsredovisningar a\nJOIN bolag b ON b.orgnr = a.orgnr\nORDER BY a.rakenskapsar_slut DESC\nLIMIT 100" },
+    { id: "pre_7", name: "Visa tabeller", sql: "SELECT name\nFROM sqlite_master\nWHERE type='table'\nORDER BY name" },
   ];
 
   let userSnippets = $state<Snippet[]>([]);
