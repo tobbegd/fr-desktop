@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import SqlEditor from "./SqlEditor.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import SnippetPanel from "./SnippetPanel.svelte";
 
   type Props = { dbPath: string };
   let { dbPath }: Props = $props();
@@ -12,6 +14,7 @@
   ];
 
   let activeMode = $state<string | null>(null);
+  let showSnippets = $state(false);
   let sqlQuery = $state("");
   let schema = $state<Record<string, string[]>>({});
 
@@ -28,12 +31,20 @@
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
-  let pageSize = $state(25);
+  let pageSize = $state(200);
   let currentPage = $state(0);
 
-  const pageSizes = [25, 50, 100, 200];
-  const totalPages = $derived(result ? Math.ceil(result.rows.length / pageSize) : 0);
-  const pagedRows = $derived(result ? result.rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize) : []);
+  const pageSizes = [200, 400, 800];
+
+  let selectedRows = $state(new Set<number>());
+  let excludedRows = $state(new Set<number>());
+  let contextMenu = $state<{ x: number; y: number; rowIdx: number } | null>(null);
+
+  const filteredRows = $derived(
+    result ? result.rows.map((row, i) => ({ row, i })).filter(({ i }) => !excludedRows.has(i)) : []
+  );
+  const totalPages = $derived(Math.ceil(filteredRows.length / pageSize));
+  const pagedRows = $derived(filteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize));
 
   let sortKeys = $state<{ col: string; dir: "ASC" | "DESC" }[]>([]);
 
@@ -59,17 +70,84 @@
     runQuery();
   }
 
+  let lastClickedRow = $state<number | null>(null);
+
+  function toggleRowSelect(i: number, shift: boolean) {
+    const s = new Set(selectedRows);
+    if (shift && lastClickedRow !== null) {
+      const from = Math.min(lastClickedRow, i);
+      const to = Math.max(lastClickedRow, i);
+      const rangeIndices = filteredRows.slice(from, to + 1).map(r => r.i);
+      rangeIndices.forEach(idx => s.add(idx));
+    } else {
+      s.has(i) ? s.delete(i) : s.add(i);
+      lastClickedRow = i;
+    }
+    selectedRows = s;
+  }
+
+  function openContextMenu(e: MouseEvent, rowIdx: number) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY, rowIdx };
+  }
+
+  function deleteRow(i: number) {
+    excludedRows = new Set([...excludedRows, i]);
+    selectedRows = new Set([...selectedRows].filter(r => r !== i));
+    currentPage = Math.min(currentPage, Math.max(0, totalPages - 1));
+  }
+
+  function deleteSelected() {
+    excludedRows = new Set([...excludedRows, ...selectedRows]);
+    selectedRows = new Set();
+    currentPage = 0;
+  }
+
+  function deleteUnselected() {
+    const toExclude = filteredRows.filter(({ i }) => !selectedRows.has(i)).map(({ i }) => i);
+    excludedRows = new Set([...excludedRows, ...toExclude]);
+    currentPage = 0;
+  }
+
+  function restoreAll() {
+    excludedRows = new Set();
+    currentPage = 0;
+  }
+
+  function toCSV(rows: unknown[][], withHeader: boolean): string {
+    function escapeCell(val: unknown): string {
+      if (val === null || val === undefined) return "";
+      const s = String(val);
+      return s.includes(",") || s.includes('"') || s.includes("\n")
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
+    }
+    const lines: string[] = [];
+    if (withHeader && result) lines.push(result.columns.map(escapeCell).join(","));
+    for (const row of rows) lines.push(row.map(escapeCell).join(","));
+    return lines.join("\n");
+  }
+
+  function copySelectedAsCSV(withHeader: boolean) {
+    if (!result) return;
+    const rows = filteredRows.filter(({ i }) => selectedRows.has(i)).map(({ row }) => row);
+    navigator.clipboard.writeText(toCSV(rows, withHeader));
+  }
+
   function toggleMode(id: string) {
     activeMode = activeMode === id ? null : id;
   }
 
-  async function runQuery() {
+  async function runQuery(resetSort = false) {
     if (!sqlQuery.trim() || !dbPath) return;
     running = true;
     error = "";
     result = null;
     currentPage = 0;
-    sortKeys = [];
+    selectedRows = new Set();
+    excludedRows = new Set();
+    lastClickedRow = null;
+    if (resetSort) sortKeys = [];
     try {
       result = await invoke<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
         "query_db",
@@ -106,18 +184,33 @@
 
     {#if activeMode === "sql"}
       <div class="px-3 pb-3 flex flex-col gap-2">
-        <SqlEditor
-          bind:value={sqlQuery}
-          {schema}
-          onchange={(v) => (sqlQuery = v)}
-          onrun={runQuery}
-        />
+        <div class="relative">
+          <SqlEditor
+            bind:value={sqlQuery}
+            {schema}
+            onchange={(v) => (sqlQuery = v)}
+            onrun={() => runQuery(true)}
+          />
+          <button
+            onclick={() => showSnippets = !showSnippets}
+            title={showSnippets ? "Dölj snippets" : "Visa snippets"}
+            class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 transition-colors cursor-pointer select-none"
+          >{showSnippets ? "▲" : "▼"}</button>
+        </div>
+        {#if showSnippets}
+          <div class="mt-1">
+            <SnippetPanel
+              currentSql={sqlQuery}
+              onselect={(sql) => { sqlQuery = sql; showSnippets = false; runQuery(true); }}
+            />
+          </div>
+        {/if}
         <div class="flex items-center justify-between">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
           <button
             class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
             disabled={!sqlQuery.trim() || running || !dbPath}
-            onclick={runQuery}
+            onclick={() => runQuery(true)}
           >
             {running ? "Kör..." : "Kör"}
           </button>
@@ -141,7 +234,7 @@
         <!-- Varning (fast, scrollar inte) -->
         {#if result.truncated}
           <p class="shrink-0 px-4 py-1.5 text-xs text-yellow-600 border-b border-zinc-800">
-            Visar max 200 rader — lägg till LIMIT i din query för fler.
+            Resultat avkortat till 50 000 rader — förfina din query med WHERE eller LIMIT.
           </p>
         {/if}
 
@@ -152,15 +245,17 @@
               <tr>
                 {#each result.columns as col}
                   <th
-                    class="sticky top-0 bg-zinc-950 px-3 py-2 font-medium whitespace-nowrap border-b border-zinc-800 z-10 cursor-pointer select-none
-                      {sortKeys.some(k => k.col === col) ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}"
+                    class="sticky top-0 px-3 py-2 font-medium whitespace-nowrap border-b border-zinc-800 z-10 cursor-pointer select-none transition-colors
+                      {sortKeys.some(k => k.col === col)
+                        ? 'bg-zinc-800 text-white'
+                        : 'bg-zinc-950 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}"
                     onclick={() => handleHeaderClick(col)}
                   >
                     {col}
                     {#if sortKeys.findIndex(k => k.col === col) !== -1}
                       {@const k = sortKeys.find(k => k.col === col)!}
                       {@const pos = sortKeys.findIndex(k => k.col === col) + 1}
-                      <span class="ml-1 text-zinc-400">
+                      <span class="ml-1 text-amber-400">
                         {k.dir === "ASC" ? "↑" : "↓"}{sortKeys.length > 1 ? pos : ""}
                       </span>
                     {/if}
@@ -169,10 +264,16 @@
               </tr>
             </thead>
             <tbody>
-              {#each pagedRows as row, i}
-                <tr class="border-b border-zinc-900 {i % 2 === 0 ? '' : 'bg-zinc-900/30'}">
+              {#each pagedRows as { row, i }}
+                <tr
+                  class="border-b border-zinc-900 cursor-pointer select-none transition-colors
+                    {selectedRows.has(i) ? 'bg-amber-900/40' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
+                  onclick={(e) => toggleRowSelect(i, e.shiftKey)}
+                  oncontextmenu={(e) => openContextMenu(e, i)}
+                >
                   {#each row as cell}
-                    <td class="px-3 py-1.5 text-zinc-300 whitespace-nowrap max-w-xs truncate">
+                    <td class="px-3 py-1.5 whitespace-nowrap max-w-xs truncate
+                      {selectedRows.has(i) ? 'text-white' : 'text-zinc-300'}">
                       {#if cell === null}
                         <span class="text-zinc-600">NULL</span>
                       {:else}
@@ -189,8 +290,14 @@
         <!-- Sidfot (fast, scrollar inte) -->
         <div class="shrink-0 flex items-center justify-between px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500">
           <span>
-            {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, result.rows.length)}
-            av {result.rows.length} rader
+            {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredRows.length)}
+            av {filteredRows.length} rader
+            {#if excludedRows.size > 0}
+              <span class="text-zinc-600">({excludedRows.size} dolda)</span>
+            {/if}
+            {#if selectedRows.size > 0}
+              <span class="text-amber-400">· {selectedRows.size} markerade</span>
+            {/if}
           </span>
           <div class="flex items-center gap-3">
             <label class="flex items-center gap-1.5">
@@ -198,7 +305,7 @@
               <select
                 bind:value={pageSize}
                 onchange={() => currentPage = 0}
-                class="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-zinc-300 cursor-pointer"
+                class="appearance-none bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-white cursor-pointer"
               >
                 {#each pageSizes as s}
                   <option value={s}>{s}</option>
@@ -207,13 +314,13 @@
             </label>
             <div class="flex items-center gap-1">
               <button
-                class="px-2 py-0.5 rounded hover:bg-zinc-800 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
+                class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors text-base font-bold text-zinc-300"
                 disabled={currentPage === 0}
                 onclick={() => currentPage--}
               >←</button>
               <span>{currentPage + 1} / {totalPages}</span>
               <button
-                class="px-2 py-0.5 rounded hover:bg-zinc-800 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors"
+                class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors text-base font-bold text-zinc-300"
                 disabled={currentPage >= totalPages - 1}
                 onclick={() => currentPage++}
               >→</button>
@@ -224,3 +331,46 @@
     </div>
   {/if}
 </div>
+
+{#if contextMenu}
+  {@const rowIdx = contextMenu.rowIdx}
+  <ContextMenu
+    x={contextMenu.x}
+    y={contextMenu.y}
+    onclose={() => contextMenu = null}
+    items={[
+      {
+        label: `Kopiera markerade som CSV (med header)`,
+        action: () => copySelectedAsCSV(true),
+        disabled: selectedRows.size === 0,
+      },
+      {
+        label: `Kopiera markerade som CSV (utan header)`,
+        action: () => copySelectedAsCSV(false),
+        disabled: selectedRows.size === 0,
+      },
+      { separator: true },
+      {
+        label: "Ta bort denna rad",
+        action: () => deleteRow(rowIdx),
+      },
+      { separator: true },
+      {
+        label: `Ta bort markerade (${selectedRows.size})`,
+        action: deleteSelected,
+        disabled: selectedRows.size === 0,
+      },
+      {
+        label: `Ta bort omarkerade`,
+        action: deleteUnselected,
+        disabled: selectedRows.size === 0,
+      },
+      { separator: true },
+      {
+        label: `Återställ alla (${excludedRows.size} dolda)`,
+        action: restoreAll,
+        disabled: excludedRows.size === 0,
+      },
+    ]}
+  />
+{/if}

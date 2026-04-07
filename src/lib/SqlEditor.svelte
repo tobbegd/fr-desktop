@@ -22,6 +22,11 @@
   onMount(() => {
     const sqlSchema: Record<string, string[]> = schema;
 
+    const tables = Object.keys(sqlSchema);
+    const placeholderText = tables.length
+      ? `SELECT * FROM ${tables.join("|")} LIMIT 10`
+      : "SELECT * FROM bolag LIMIT 10";
+
     const allColumns = [...new Set(Object.values(sqlSchema).flat())].map((col) => ({
       label: col,
       type: "property",
@@ -63,7 +68,7 @@
             onchange(newVal);
           }
         }),
-        cmPlaceholder("SELECT * FROM bolag LIMIT 10"),
+        cmPlaceholder(placeholderText),
       ],
     });
 

@@ -272,7 +272,7 @@ struct QueryResult {
     truncated: bool,
 }
 
-const MAX_ROWS: usize = 200;
+const MAX_ROWS: usize = 50_000;
 
 #[tauri::command]
 async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
