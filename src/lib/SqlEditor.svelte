@@ -1,0 +1,84 @@
+<script lang="ts">
+  import { onMount, onDestroy } from "svelte";
+  import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
+  import { EditorState } from "@codemirror/state";
+  import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+  import { autocompletion, completionKeymap, type CompletionContext } from "@codemirror/autocomplete";
+  import { sql, SQLite } from "@codemirror/lang-sql";
+  import { oneDark } from "@codemirror/theme-one-dark";
+
+  type Props = {
+    value: string;
+    schema: Record<string, string[]>;
+    onchange: (val: string) => void;
+    onrun: () => void;
+  };
+
+  let { value = $bindable(), schema, onchange, onrun }: Props = $props();
+
+  let container: HTMLDivElement;
+  let view: EditorView | null = null;
+
+  onMount(() => {
+    const sqlSchema: Record<string, string[]> = schema;
+
+    const allColumns = [...new Set(Object.values(sqlSchema).flat())].map((col) => ({
+      label: col,
+      type: "property",
+    }));
+
+    function columnFallback(ctx: CompletionContext) {
+      const word = ctx.matchBefore(/\w*/);
+      if (!word || (word.from === word.to && !ctx.explicit)) return null;
+      return { from: word.from, options: allColumns };
+    }
+
+    const startState = EditorState.create({
+      doc: value,
+      extensions: [
+        history(),
+        keymap.of([
+          { key: "Ctrl-Enter", run: () => { onrun(); return true; } },
+          { key: "Mod-Enter", run: () => { onrun(); return true; } },
+          ...completionKeymap,
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
+        autocompletion(),
+        sql({ dialect: SQLite, schema: sqlSchema, upperCaseKeywords: true }),
+        EditorState.languageData.of(() => [{ autocomplete: columnFallback }]),
+        oneDark,
+        EditorView.theme({
+          "&": { borderRadius: "0.5rem", fontSize: "0.875rem" },
+          ".cm-editor": { borderRadius: "0.5rem" },
+          ".cm-scroller": { fontFamily: "monospace", borderRadius: "0.5rem" },
+          ".cm-content": { padding: "8px 4px", minHeight: "72px" },
+          "&.cm-focused": { outline: "none" },
+          ".cm-focused .cm-cursor": { borderLeftColor: "#fff" },
+        }),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            const newVal = update.state.doc.toString();
+            value = newVal;
+            onchange(newVal);
+          }
+        }),
+        cmPlaceholder("SELECT * FROM bolag LIMIT 10"),
+      ],
+    });
+
+    view = new EditorView({ state: startState, parent: container });
+  });
+
+  onDestroy(() => view?.destroy());
+
+  $effect(() => {
+    if (view && value !== view.state.doc.toString()) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value },
+      });
+    }
+  });
+</script>
+
+<div bind:this={container} class="rounded-lg overflow-hidden border border-zinc-700 focus-within:border-zinc-500 transition-colors"></div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import SqlEditor from "./SqlEditor.svelte";
 
   type Props = { dbPath: string };
   let { dbPath }: Props = $props();
@@ -12,6 +13,18 @@
 
   let activeMode = $state<string | null>(null);
   let sqlQuery = $state("");
+  let schema = $state<Record<string, string[]>>({});
+
+  async function loadSchema() {
+    if (!dbPath) return;
+    try {
+      schema = await invoke<Record<string, string[]>>("get_schema", { dbPath });
+    } catch {}
+  }
+
+  $effect(() => {
+    if (dbPath) loadSchema();
+  });
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
@@ -69,9 +82,6 @@
     }
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") runQuery();
-  }
 </script>
 
 <!-- SearchArea fyller återstående höjd i föräldern -->
@@ -80,7 +90,7 @@
   <!-- Sök-input (fast höjd) -->
   <div class="shrink-0 border-b border-zinc-800">
     <div class="flex items-center gap-1 px-3 py-1.5">
-      <span class="text-xs text-zinc-600 mr-1">Sök</span>
+      <span class="text-xs font-bold text-zinc-600 mr-1">Sök</span>
       {#each modes as mode}
         <button
           class="px-2.5 py-1 text-xs rounded-md transition-colors cursor-pointer
@@ -96,13 +106,12 @@
 
     {#if activeMode === "sql"}
       <div class="px-3 pb-3 flex flex-col gap-2">
-        <textarea
+        <SqlEditor
           bind:value={sqlQuery}
-          onkeydown={onKeydown}
-          placeholder="SELECT * FROM bolag LIMIT 10"
-          rows={3}
-          class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 font-mono focus:outline-none focus:border-zinc-500 resize-none"
-        ></textarea>
+          {schema}
+          onchange={(v) => (sqlQuery = v)}
+          onrun={runQuery}
+        />
         <div class="flex items-center justify-between">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
           <button

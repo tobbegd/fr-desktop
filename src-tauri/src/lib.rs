@@ -230,6 +230,39 @@ async fn download_db(
         .map(|s| s.to_string())
 }
 
+// ---- Schema ----
+
+#[tauri::command]
+async fn get_schema(db_path: String) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .map_err(|e| e.to_string())?;
+        let tables: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut schema = std::collections::HashMap::new();
+        for table in tables {
+            let mut col_stmt = conn
+                .prepare(&format!("PRAGMA table_info(\"{}\")", table))
+                .map_err(|e| e.to_string())?;
+            let cols: Vec<String> = col_stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            schema.insert(table, cols);
+        }
+        Ok(schema)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---- Query DB ----
 
 #[derive(Serialize)]
@@ -295,7 +328,8 @@ pub fn run() {
             verify_license,
             check_manifest,
             download_db,
-            query_db
+            query_db,
+            get_schema
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
