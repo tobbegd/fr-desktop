@@ -319,6 +319,19 @@ async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn save_file(filename: String, content: String) -> Result<(), String> {
+    let path = rfd::AsyncFileDialog::new()
+        .set_file_name(&filename)
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await
+        .ok_or_else(|| "Avbruten".to_string())?;
+    tokio::fs::write(path.path(), content.as_bytes())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -329,7 +342,8 @@ pub fn run() {
             check_manifest,
             download_db,
             query_db,
-            get_schema
+            get_schema,
+            save_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

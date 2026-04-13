@@ -4,15 +4,17 @@
     apiKey: string;
     email: string;
     tier: string;
+    dbExportDate: string;
     onChangeKey: () => void;
     onClose: () => void;
   };
 
-  let { serverUrl, apiKey, email, tier, onChangeKey, onClose }: Props = $props();
+  let { serverUrl, apiKey, email, tier, dbExportDate, onChangeKey, onClose }: Props = $props();
 
-  let activeSection = $state("auth");
+  let activeSection = $state("general");
 
   const nav = [
+    { id: "general", label: "Allmänt" },
     { id: "auth", label: "Autentisering" },
   ];
 
@@ -58,7 +60,16 @@
     </div>
 
     <div class="flex-1 p-6">
-      {#if activeSection === "auth"}
+      {#if activeSection === "general"}
+        <div class="max-w-md flex flex-col gap-4">
+          <div>
+            <p class="text-xs text-zinc-500 mb-1">Exportdatum</p>
+            <p class="text-sm text-zinc-200 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
+              {dbExportDate || "—"}
+            </p>
+          </div>
+        </div>
+      {:else if activeSection === "auth"}
         <div class="max-w-md flex flex-col gap-6">
           <div class="flex flex-col gap-4">
             <div>

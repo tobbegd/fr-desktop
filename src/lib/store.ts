@@ -16,6 +16,7 @@ export interface Prefs {
   dbEtag: string;
   dbSha256: string;
   dbPath: string;
+  dbExportDate: string;
   offlineLogins: number;
 }
 
@@ -28,6 +29,7 @@ const defaults: Prefs = {
   dbEtag: "",
   dbSha256: "",
   dbPath: "",
+  dbExportDate: "",
   offlineLogins: 0,
 };
 

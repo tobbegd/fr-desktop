@@ -22,6 +22,7 @@
   let dbEtag = $state("");
   let dbSha256 = $state("");
   let dbPath = $state("");
+  let dbExportDate = $state("");
 
   // Offline-inloggningar (nödläge)
   const OFFLINE_MAX = 2;
@@ -47,6 +48,7 @@
     if (p.dbEtag) dbEtag = p.dbEtag;
     if (p.dbSha256) dbSha256 = p.dbSha256;
     if (p.dbPath) dbPath = p.dbPath;
+    if (p.dbExportDate) dbExportDate = p.dbExportDate;
     offlineLogins = p.offlineLogins ?? 0;
 
     if (p.apiKey) {
@@ -168,10 +170,12 @@
         fileName: updateFile.name,
       });
       log(`Databas sparad: ${dbPath}`);
-      await savePrefs({ dbEtag: updateEtag, dbSha256: updateFile.sha256, dbPath: downloadedPath });
+      const exportDate = updateFile.name.replace(/\.(sqlite|db|zip)$/i, "").split("_")[1] ?? "";
+      await savePrefs({ dbEtag: updateEtag, dbSha256: updateFile.sha256, dbPath: downloadedPath, dbExportDate: exportDate });
       dbEtag = updateEtag;
       dbSha256 = updateFile.sha256;
       dbPath = downloadedPath;
+      dbExportDate = exportDate;
       updateAvailable = false;
       updateFile = null;
       showStatus("Databasen är uppdaterad.", "success");
@@ -266,6 +270,7 @@
     {apiKey}
     {email}
     {tier}
+    {dbExportDate}
     onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
     onClose={() => view = "main"}
   />
