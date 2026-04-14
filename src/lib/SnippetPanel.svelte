@@ -12,11 +12,11 @@
   const STANDARD_ID = "standard";
 
   const predefined: Snippet[] = [
-    { id: "pre_1", name: "Alla bolag (100)", sql: "SELECT *\nFROM bolag\nLIMIT 100" },
+    { id: "pre_1", name: "Alla bolag (100)", sql: "SELECT orgnr, orgnamn, orgform, postort, gatuadress,\n       sni_1, sni_1_namn, telefon, email, webbadress,\n       nettoomsattning, medelantal_anstallda, storleksklass_anst\nFROM bolag\nWHERE telefon IS NOT NULL AND telefon != ''\n  AND email IS NOT NULL AND email != ''\n  AND webbadress IS NOT NULL AND webbadress != ''\nORDER BY RANDOM()\nLIMIT 100" },
     { id: "pre_2", name: "Räkna bolag", sql: "SELECT COUNT(*) AS antal\nFROM bolag" },
     { id: "pre_3", name: "Sök på namn", sql: "SELECT *\nFROM bolag\nWHERE orgnamn LIKE '%sök%'\nLIMIT 100" },
     { id: "pre_4", name: "Bolag med kontaktuppgifter", sql: "SELECT orgnr, orgnamn, telefon, email, webbadress, postort\nFROM bolag\nWHERE telefon IS NOT NULL\n  AND orgnamn LIKE '%sök%'\nLIMIT 100" },
-    { id: "pre_5", name: "Bolag med SNI-bransch", sql: "SELECT orgnr, orgnamn, sni_1, sni_1_namn, postort\nFROM bolag\nWHERE sni_1 != ''\nLIMIT 100" },
+    { id: "pre_5", name: "Bolag med SNI-bransch", sql: "SELECT orgnr, orgnamn, sni_1, sni_1_namn, postort\nFROM bolag\nWHERE sni_1 != '' AND sni_1 != '00000'\nLIMIT 100" },
     { id: "pre_8", name: "Bolag per storleksklass (anst)", sql: "SELECT storleksklass_anst, COUNT(*) AS antal\nFROM bolag\nWHERE storleksklass_anst IS NOT NULL\nGROUP BY storleksklass_anst\nORDER BY storleksklass_anst" },
     { id: "pre_9", name: "Registrerade arbetsgivare med kontakt", sql: "SELECT orgnr, orgnamn, telefon, email, storleksklass_anst,\n       antal_arbetsst, postort\nFROM bolag\nWHERE arbetsgivarstatus IN ('1','2','3')\n  AND telefon IS NOT NULL\nLIMIT 100" },
     { id: "pre_10", name: "Exporterande bolag", sql: "SELECT orgnr, orgnamn, export_import, telefon, email, postort\nFROM bolag\nWHERE export_import = '2'\nLIMIT 100" },
