@@ -15,6 +15,8 @@
 
   let activeMode = $state<string | null>(null);
   let showSnippets = $state(false);
+  let blinkSnippet = $state(false);
+  let blinkTimer: ReturnType<typeof setTimeout> | null = null;
   let sqlQuery = $state("");
   let schema = $state<Record<string, string[]>>({});
 
@@ -28,6 +30,16 @@
   $effect(() => {
     if (dbPath) loadSchema();
   });
+  function hscroll(node: HTMLElement) {
+    function onWheel(e: WheelEvent) {
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      node.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    }
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return { destroy() { node.removeEventListener("wheel", onWheel); } };
+  }
+
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
@@ -48,8 +60,54 @@
 
   let sortKeys = $state<{ col: string; dir: "ASC" | "DESC" }[]>([]);
 
-  function stripOrderBy(sql: string): string {
-    return sql.replace(/\s+ORDER\s+BY\s+[\s\S]+$/i, "").trim();
+  function parseSelectCols(sql: string): string[] {
+    const match = sql.match(/^\s*SELECT\s+([\s\S]+?)\s+FROM\s+/i);
+    if (!match) return [];
+    const raw = match[1];
+    const cols: string[] = [];
+    let depth = 0, start = 0;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] === "(") depth++;
+      else if (raw[i] === ")") depth--;
+      else if (raw[i] === "," && depth === 0) {
+        cols.push(raw.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    cols.push(raw.slice(start).trim());
+    return cols;
+  }
+
+  function getColAlias(expr: string): string {
+    const asMatch = expr.match(/\bAS\s+["'`]?(\w+)["'`]?\s*$/i);
+    if (asMatch) return asMatch[1];
+    const simple = expr.match(/["'`]?(\w+)["'`]?\s*$/);
+    return simple ? simple[1] : expr;
+  }
+
+  function handleColRemove(col: string) {
+    const exprs = parseSelectCols(sqlQuery);
+    if (exprs.length <= 1) return;
+    const remaining = exprs.filter(e => getColAlias(e) !== col);
+    if (remaining.length === 0) return;
+    sqlQuery = sqlQuery.replace(
+      /^(\s*SELECT\s+)[\s\S]+?(\s+FROM\s+)/i,
+      `$1${remaining.join(", ")}$2`
+    );
+    sortKeys = sortKeys.filter(k => k.col !== col);
+    runQuery();
+  }
+
+  function parseSqlParts(sql: string): { base: string; limit: string } {
+    let s = sql.trim();
+    let limit = "";
+    const limitMatch = s.match(/(\s+LIMIT\s+\d+)\s*$/i);
+    if (limitMatch) {
+      limit = limitMatch[1].trim();
+      s = s.slice(0, s.length - limitMatch[0].length).trim();
+    }
+    s = s.replace(/\s+ORDER\s+BY\s+[\s\S]+$/i, "").trim();
+    return { base: s, limit };
   }
 
   function handleHeaderClick(col: string) {
@@ -61,11 +119,12 @@
     } else {
       sortKeys = sortKeys.filter((_, i) => i !== idx);
     }
+    const { base, limit } = parseSqlParts(sqlQuery);
     if (sortKeys.length === 0) {
-      sqlQuery = stripOrderBy(sqlQuery);
+      sqlQuery = limit ? `${base}\n${limit}` : base;
     } else {
       const orderBy = sortKeys.map(k => `"${k.col}" ${k.dir}`).join(", ");
-      sqlQuery = `${stripOrderBy(sqlQuery)}\nORDER BY ${orderBy}`;
+      sqlQuery = `${base}\nORDER BY ${orderBy}${limit ? '\n' + limit : ''}`;
     }
     runQuery();
   }
@@ -135,7 +194,13 @@
   }
 
   function toggleMode(id: string) {
+    const opening = activeMode !== id && id === "sql";
     activeMode = activeMode === id ? null : id;
+    if (opening) {
+      if (blinkTimer) clearTimeout(blinkTimer);
+      blinkSnippet = true;
+      blinkTimer = setTimeout(() => { blinkSnippet = false; }, 3000);
+    }
   }
 
   async function runQuery(resetSort = false) {
@@ -192,9 +257,10 @@
             onrun={() => runQuery(true)}
           />
           <button
-            onclick={() => showSnippets = !showSnippets}
+            onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
             title={showSnippets ? "Dölj snippets" : "Visa snippets"}
-            class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 transition-colors cursor-pointer select-none"
+            class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none
+              {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
           >{showSnippets ? "▲" : "▼"}</button>
         </div>
         {#if showSnippets}
@@ -239,26 +305,36 @@
         {/if}
 
         <!-- Tabell (scrollar, sticky header fungerar här) -->
-        <div class="flex-1 overflow-auto min-h-0">
-          <table class="w-full text-xs text-left border-collapse">
+        <div class="flex-1 overflow-auto min-h-0" use:hscroll>
+          <table class="min-w-full text-xs text-left border-collapse">
             <thead>
               <tr>
                 {#each result.columns as col}
                   <th
-                    class="sticky top-0 px-3 py-2 font-medium whitespace-nowrap border-b border-zinc-800 z-10 cursor-pointer select-none transition-colors
+                    class="group sticky top-0 px-3 py-2 font-medium whitespace-nowrap border-b border-zinc-800 z-10 select-none transition-colors
                       {sortKeys.some(k => k.col === col)
                         ? 'bg-zinc-800 text-white'
                         : 'bg-zinc-950 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}"
-                    onclick={() => handleHeaderClick(col)}
                   >
-                    {col}
-                    {#if sortKeys.findIndex(k => k.col === col) !== -1}
-                      {@const k = sortKeys.find(k => k.col === col)!}
-                      {@const pos = sortKeys.findIndex(k => k.col === col) + 1}
-                      <span class="ml-1 text-amber-400">
-                        {k.dir === "ASC" ? "↑" : "↓"}{sortKeys.length > 1 ? pos : ""}
+                    <span class="flex items-center gap-1">
+                      <span class="cursor-pointer" title="Sortera" onclick={() => handleHeaderClick(col)}>
+                        {col}
+                        {#if sortKeys.findIndex(k => k.col === col) !== -1}
+                          {@const k = sortKeys.find(k => k.col === col)!}
+                          {@const pos = sortKeys.findIndex(k => k.col === col) + 1}
+                          <span class="ml-1 text-amber-400">
+                            {k.dir === "ASC" ? "↑" : "↓"}{sortKeys.length > 1 ? pos : ""}
+                          </span>
+                        {/if}
                       </span>
-                    {/if}
+                      {#if !sortKeys.some(k => k.col === col)}
+                      <button
+                        onclick={() => handleColRemove(col)}
+                        class="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-zinc-400 hover:text-red-400 transition-opacity cursor-pointer leading-none"
+                        title="Ta bort kolumn"
+                      >×</button>
+                      {/if}
+                    </span>
                   </th>
                 {/each}
               </tr>
@@ -300,6 +376,7 @@
             {/if}
           </span>
           <div class="flex items-center gap-3">
+            {#if totalPages > 1}
             <label class="flex items-center gap-1.5">
               Rader per sida
               <select
@@ -325,6 +402,7 @@
                 onclick={() => currentPage++}
               >→</button>
             </div>
+            {/if}
           </div>
         </div>
       {/if}
@@ -374,3 +452,13 @@
     ]}
   />
 {/if}
+
+<style>
+  @keyframes snippet-pulse {
+    0%, 100% { border-color: rgb(249 115 22); box-shadow: 0 0 0 0 rgba(249,115,22,0); }
+    50% { border-color: rgb(251 146 60); box-shadow: 0 0 6px 2px rgba(249,115,22,0.5); }
+  }
+  :global(.snippet-blink) {
+    animation: snippet-pulse 0.7s ease-in-out infinite;
+  }
+</style>
