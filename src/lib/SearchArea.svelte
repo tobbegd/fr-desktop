@@ -3,6 +3,7 @@
   import SqlEditor from "./SqlEditor.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import SnippetPanel from "./SnippetPanel.svelte";
+  import ExportPanel from "./ExportPanel.svelte";
 
   type Props = { dbPath: string };
   let { dbPath }: Props = $props();
@@ -50,11 +51,26 @@
 
   let selectedRows = $state(new Set<number>());
   let excludedRows = $state(new Set<number>());
+  let colFilters = $state<Record<string, string>>({});
   let contextMenu = $state<{ x: number; y: number; rowIdx: number } | null>(null);
 
-  const filteredRows = $derived(
-    result ? result.rows.map((row, i) => ({ row, i })).filter(({ i }) => !excludedRows.has(i)) : []
-  );
+  const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
+
+  const filteredRows = $derived.by(() => {
+    if (!result) return [];
+    return result.rows.map((row, i) => ({ row, i })).filter(({ row, i }) => {
+      if (excludedRows.has(i)) return false;
+      for (const [col, filter] of Object.entries(colFilters)) {
+        if (!filter) continue;
+        const colIdx = result.columns.indexOf(col);
+        if (colIdx === -1) continue;
+        const cell = row[colIdx];
+        const val = cell === null || cell === undefined ? "" : String(cell).toLowerCase();
+        if (!val.includes(filter.toLowerCase())) return false;
+      }
+      return true;
+    });
+  });
   const totalPages = $derived(Math.ceil(filteredRows.length / pageSize));
   const pagedRows = $derived(filteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize));
 
@@ -134,10 +150,13 @@
   function toggleRowSelect(i: number, shift: boolean) {
     const s = new Set(selectedRows);
     if (shift && lastClickedRow !== null) {
-      const from = Math.min(lastClickedRow, i);
-      const to = Math.max(lastClickedRow, i);
-      const rangeIndices = filteredRows.slice(from, to + 1).map(r => r.i);
-      rangeIndices.forEach(idx => s.add(idx));
+      const fromPos = filteredRows.findIndex(r => r.i === lastClickedRow);
+      const toPos = filteredRows.findIndex(r => r.i === i);
+      if (fromPos !== -1 && toPos !== -1) {
+        const start = Math.min(fromPos, toPos);
+        const end = Math.max(fromPos, toPos);
+        filteredRows.slice(start, end + 1).forEach(r => s.add(r.i));
+      }
     } else {
       s.has(i) ? s.delete(i) : s.add(i);
       lastClickedRow = i;
@@ -193,6 +212,8 @@
     navigator.clipboard.writeText(toCSV(rows, withHeader));
   }
 
+  let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
+
   function toggleMode(id: string) {
     const opening = activeMode !== id && id === "sql";
     activeMode = activeMode === id ? null : id;
@@ -213,6 +234,7 @@
     excludedRows = new Set();
     lastClickedRow = null;
     if (resetSort) sortKeys = [];
+    colFilters = {};
     try {
       result = await invoke<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
         "query_db",
@@ -335,6 +357,16 @@
                       >×</button>
                       {/if}
                     </span>
+                    <input
+                      type="text"
+                      placeholder="filtrera…"
+                      value={colFilters[col] ?? ""}
+                      oninput={(e) => { colFilters = { ...colFilters, [col]: (e.target as HTMLInputElement).value }; currentPage = 0; }}
+                      onclick={(e) => e.stopPropagation()}
+                      class="mt-1 w-full min-w-0 px-1.5 py-0.5 text-xs font-normal rounded border
+                        {colFilters[col] ? 'border-amber-600 bg-amber-950/40 text-white' : 'border-zinc-700 bg-zinc-900 text-zinc-400'}
+                        placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                    />
                   </th>
                 {/each}
               </tr>
@@ -368,6 +400,12 @@
           <span>
             {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredRows.length)}
             av {filteredRows.length} rader
+            {#if hasColFilters}
+              <button
+                onclick={() => { colFilters = {}; currentPage = 0; }}
+                class="ml-2 px-1.5 py-0.5 rounded bg-amber-800/50 text-amber-300 hover:bg-amber-700/50 cursor-pointer transition-colors"
+              >rensa filter ×</button>
+            {/if}
             {#if excludedRows.size > 0}
               <span class="text-zinc-600">({excludedRows.size} dolda)</span>
             {/if}
@@ -418,6 +456,16 @@
     onclose={() => contextMenu = null}
     items={[
       {
+        label: `Exportera markerade (${selectedRows.size}) som CSV`,
+        action: () => exportPanel = { rows: filteredRows.filter(({ i }) => selectedRows.has(i)).map(({ row }) => row), label: "markerade rader" },
+        disabled: selectedRows.size === 0,
+      },
+      {
+        label: `Exportera alla (${filteredRows.length})`,
+        action: () => exportPanel = { rows: filteredRows.map(({ row }) => row), label: "alla rader" },
+      },
+      { separator: true },
+      {
         label: `Kopiera markerade som CSV (med header)`,
         action: () => copySelectedAsCSV(true),
         disabled: selectedRows.size === 0,
@@ -450,6 +498,15 @@
         disabled: excludedRows.size === 0,
       },
     ]}
+  />
+{/if}
+
+{#if exportPanel && result}
+  <ExportPanel
+    rows={exportPanel.rows}
+    columns={result.columns}
+    label={exportPanel.label}
+    onclose={() => exportPanel = null}
   />
 {/if}
 

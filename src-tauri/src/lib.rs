@@ -320,14 +320,31 @@ async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
 }
 
 #[tauri::command]
-async fn save_file(filename: String, content: String) -> Result<(), String> {
+async fn save_file(filename: String, content: String, extension: Option<String>) -> Result<(), String> {
+    let ext = extension.as_deref().unwrap_or("json");
+    let filter_name = match ext { "csv" => "CSV", _ => "JSON" };
     let path = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
-        .add_filter("JSON", &["json"])
+        .add_filter(filter_name, &[ext])
         .save_file()
         .await
         .ok_or_else(|| "Avbruten".to_string())?;
     tokio::fs::write(path.path(), content.as_bytes())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_file_binary(filename: String, bytes: Vec<u8>) -> Result<(), String> {
+    let ext = filename.rsplit('.').next().unwrap_or("bin");
+    let filter_name = match ext { "xlsx" => "Excel", _ => "Fil" };
+    let path = rfd::AsyncFileDialog::new()
+        .set_file_name(&filename)
+        .add_filter(filter_name, &[ext])
+        .save_file()
+        .await
+        .ok_or_else(|| "Avbruten".to_string())?;
+    tokio::fs::write(path.path(), bytes)
         .await
         .map_err(|e| e.to_string())
 }
@@ -343,7 +360,8 @@ pub fn run() {
             download_db,
             query_db,
             get_schema,
-            save_file
+            save_file,
+            save_file_binary
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
