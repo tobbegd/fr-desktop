@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke as tauri } from "@tauri-apps/api/core";
   import SqlEditor from "./SqlEditor.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import SnippetPanel from "./SnippetPanel.svelte";
@@ -24,7 +24,7 @@
   async function loadSchema() {
     if (!dbPath) return;
     try {
-      schema = await invoke<Record<string, string[]>>("get_schema", { dbPath });
+      schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
     } catch {}
   }
 
@@ -236,7 +236,7 @@
     if (resetSort) sortKeys = [];
     colFilters = {};
     try {
-      result = await invoke<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
+      result = await tauri<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
         "query_db",
         { dbPath, sql: sqlQuery }
       );
@@ -456,7 +456,7 @@
     onclose={() => contextMenu = null}
     items={[
       {
-        label: `Exportera markerade (${selectedRows.size}) som CSV`,
+        label: `Exportera markerade (${selectedRows.size})`,
         action: () => exportPanel = { rows: filteredRows.filter(({ i }) => selectedRows.has(i)).map(({ row }) => row), label: "markerade rader" },
         disabled: selectedRows.size === 0,
       },
@@ -473,6 +473,11 @@
       {
         label: `Kopiera markerade som CSV (utan header)`,
         action: () => copySelectedAsCSV(false),
+        disabled: selectedRows.size === 0,
+      },
+      {
+        label: "Avmarkera alla",
+        action: () => { selectedRows = new Set(); },
         disabled: selectedRows.size === 0,
       },
       { separator: true },
@@ -510,12 +515,3 @@
   />
 {/if}
 
-<style>
-  @keyframes snippet-pulse {
-    0%, 100% { border-color: rgb(249 115 22); box-shadow: 0 0 0 0 rgba(249,115,22,0); }
-    50% { border-color: rgb(251 146 60); box-shadow: 0 0 6px 2px rgba(249,115,22,0.5); }
-  }
-  :global(.snippet-blink) {
-    animation: snippet-pulse 0.7s ease-in-out infinite;
-  }
-</style>

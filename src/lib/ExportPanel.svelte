@@ -12,13 +12,20 @@
   let { rows, columns, label, onclose }: Props = $props();
 
   type Format = "csv" | "xlsx" | "json";
-  let selectedFormat = $state<Format>("csv");
+  let selectedFormats = $state<Set<Format>>(new Set(["csv"]));
+  let exportError = $state("");
 
   const formats: { id: Format; label: string }[] = [
     { id: "csv",  label: "CSV" },
     { id: "xlsx", label: "Excel" },
     { id: "json", label: "JSON" },
   ];
+
+  function toggleFormat(id: Format) {
+    const s = new Set(selectedFormats);
+    s.has(id) ? s.delete(id) : s.add(id);
+    selectedFormats = s;
+  }
 
   function buildCsv(): string {
     function escapeCell(val: unknown): string {
@@ -30,15 +37,15 @@
     }
     const lines = [columns.map(escapeCell).join(",")];
     for (const row of rows) lines.push(row.map(escapeCell).join(","));
-    return lines.join("\n");
+    return "\uFEFF" + lines.join("\n");
   }
 
-  function buildXlsx(): Uint8Array {
+  function buildXlsx(): string {
     const data = [columns, ...rows.map(r => r.map(c => c === null || c === undefined ? "" : c))];
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Export");
-    return XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    return XLSX.write(wb, { type: "base64", bookType: "xlsx" });
   }
 
   function buildJson(): string {
@@ -49,18 +56,24 @@
   }
 
   async function doExport() {
-    if (selectedFormat === "csv") {
-      const content = buildCsv();
-      await invoke("save_file", { filename: "export.csv", content, extension: "csv" }).catch(() => {});
-    } else if (selectedFormat === "xlsx") {
-      const bytes = buildXlsx();
-      const content = Array.from(bytes).map(b => String.fromCharCode(b)).join("");
-      await invoke("save_file_binary", { filename: "export.xlsx", bytes: Array.from(bytes) }).catch(() => {});
-    } else if (selectedFormat === "json") {
-      const content = buildJson();
-      await invoke("save_file", { filename: "export.json", content, extension: "json" }).catch(() => {});
+    exportError = "";
+    try {
+      for (const fmt of selectedFormats) {
+        if (fmt === "csv") {
+          const content = buildCsv();
+          await invoke("save_file", { filename: "export.csv", content, extension: "csv" });
+        } else if (fmt === "xlsx") {
+          const b64 = buildXlsx();
+          await invoke("save_file_binary", { filename: "export.xlsx", data: b64 });
+        } else if (fmt === "json") {
+          const content = buildJson();
+          await invoke("save_file", { filename: "export.json", content, extension: "json" });
+        }
+      }
+      onclose();
+    } catch (e) {
+      if (String(e) !== "Avbruten") exportError = String(e);
     }
-    onclose();
   }
 
   function onBackdropClick(e: MouseEvent) {
@@ -86,20 +99,25 @@
     <div class="flex gap-2">
       {#each formats as fmt}
         <button
-          onclick={() => selectedFormat = fmt.id}
+          onclick={() => toggleFormat(fmt.id)}
           class="flex-1 py-2 rounded-lg text-sm font-medium border transition-colors cursor-pointer
-            {selectedFormat === fmt.id
+            {selectedFormats.has(fmt.id)
               ? 'bg-amber-600 border-amber-500 text-white'
               : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500'}"
         >{fmt.label}</button>
       {/each}
     </div>
 
+    {#if exportError}
+      <p class="text-xs text-red-400 font-mono">{exportError}</p>
+    {/if}
+
     <button
       onclick={doExport}
-      class="w-full py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors cursor-pointer"
+      disabled={selectedFormats.size === 0}
+      class="w-full py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-40"
     >
-      Exportera som {formats.find(f => f.id === selectedFormat)?.label}
+      Exportera
     </button>
 
   </div>

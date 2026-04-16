@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -335,7 +336,8 @@ async fn save_file(filename: String, content: String, extension: Option<String>)
 }
 
 #[tauri::command]
-async fn save_file_binary(filename: String, bytes: Vec<u8>) -> Result<(), String> {
+async fn save_file_binary(filename: String, data: String) -> Result<(), String> {
+    let bytes = general_purpose::STANDARD.decode(&data).map_err(|e| e.to_string())?;
     let ext = filename.rsplit('.').next().unwrap_or("bin");
     let filter_name = match ext { "xlsx" => "Excel", _ => "Fil" };
     let path = rfd::AsyncFileDialog::new()
