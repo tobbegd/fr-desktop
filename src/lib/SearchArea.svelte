@@ -4,21 +4,25 @@
   import ContextMenu from "./ContextMenu.svelte";
   import SnippetPanel from "./SnippetPanel.svelte";
   import ExportPanel from "./ExportPanel.svelte";
+  import { loadPrefs } from "$lib/store";
+  import { buildPrompt } from "$lib/aiPrompt";
 
-  type Props = { dbPath: string };
-  let { dbPath }: Props = $props();
+  type Props = {
+    dbPath: string;
+    ollamaReady: boolean;
+    onOpenAiSettings: () => void;
+  };
+  let { dbPath, ollamaReady, onOpenAiSettings }: Props = $props();
 
-  type SearchMode = { id: string; label: string };
-  const modes: SearchMode[] = [
-    { id: "sql", label: "SQL" },
-    // { id: "ai", label: "AI" },
-  ];
-
-  let activeMode = $state<string | null>(null);
   let showSnippets = $state(false);
   let blinkSnippet = $state(false);
   let blinkTimer: ReturnType<typeof setTimeout> | null = null;
   let sqlQuery = $state("");
+
+  // AI
+  let aiQuery = $state("");
+  let aiRunning = $state(false);
+  let aiError = $state("");
   let schema = $state<Record<string, string[]>>({});
 
   async function loadSchema() {
@@ -51,6 +55,7 @@
 
   let selectedRows = $state(new Set<number>());
   let excludedRows = $state(new Set<number>());
+  let hiddenCols = $state(new Set<string>());
   let colFilters = $state<Record<string, string>>({});
   let contextMenu = $state<{ x: number; y: number; rowIdx: number } | null>(null);
 
@@ -214,13 +219,27 @@
 
   let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
 
-  function toggleMode(id: string) {
-    const opening = activeMode !== id && id === "sql";
-    activeMode = activeMode === id ? null : id;
-    if (opening) {
-      if (blinkTimer) clearTimeout(blinkTimer);
-      blinkSnippet = true;
-      blinkTimer = setTimeout(() => { blinkSnippet = false; }, 3000);
+  async function runAiQuery() {
+    if (!aiQuery.trim()) return;
+    aiRunning = true;
+    aiError = "";
+    try {
+      const prefs = await loadPrefs();
+      const model = prefs.aiModel;
+      if (!model) { aiError = "Ingen AI-modell vald. Gå till Inställningar → AI-assistent."; return; }
+      const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
+      const schemaText = Object.entries(schema)
+        .map(([t, cols]) => `${t} (${cols.join(", ")})`)
+        .join("\n");
+      const sql = await tauri<string>("query_ollama", {
+        model,
+        prompt: buildPrompt(schema, aiQuery, model),
+      });
+      sqlQuery = sql.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim();
+    } catch (e) {
+      aiError = String(e);
+    } finally {
+      aiRunning = false;
     }
   }
 
@@ -235,6 +254,7 @@
     lastClickedRow = null;
     if (resetSort) sortKeys = [];
     colFilters = {};
+    hiddenCols = new Set();
     try {
       result = await tauri<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
         "query_db",
@@ -254,60 +274,77 @@
 
   <!-- Sök-input (fast höjd) -->
   <div class="shrink-0 border-b border-zinc-800">
-    <div class="flex items-center gap-1 px-3 py-1.5">
-      <span class="text-xs font-bold text-zinc-600 mr-1">Sök</span>
-      {#each modes as mode}
-        <button
-          class="px-2.5 py-1 text-xs rounded-md transition-colors cursor-pointer
-            {activeMode === mode.id
-              ? 'bg-zinc-700 text-white'
-              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'}"
-          onclick={() => toggleMode(mode.id)}
-        >
-          {mode.label}
-        </button>
-      {/each}
-    </div>
-
-    {#if activeMode === "sql"}
-      <div class="px-3 pb-3 flex flex-col gap-2">
-        <div class="relative">
-          <SqlEditor
-            bind:value={sqlQuery}
-            {schema}
-            onchange={(v) => (sqlQuery = v)}
-            onrun={() => runQuery(true)}
-          />
+    <!-- AI-fält -->
+    <div class="px-3 pt-2 pb-2 border-b border-zinc-800/60">
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-zinc-600 shrink-0">AI</span>
+        <input
+          type="text"
+          bind:value={aiQuery}
+          placeholder={ollamaReady ? "Beskriv vad du vill söka..." : "AI ej konfigurerad — klicka för att installera"}
+          class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 text-sm placeholder-zinc-600 focus:outline-none transition-colors
+            {ollamaReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
+          readonly={!ollamaReady}
+          onfocus={() => { if (!ollamaReady) onOpenAiSettings(); }}
+          onkeydown={(e) => { if (e.key === "Enter" && ollamaReady) runAiQuery(); }}
+        />
+        {#if ollamaReady}
           <button
-            onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
-            title={showSnippets ? "Dölj snippets" : "Visa snippets"}
-            class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none
-              {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
-          >{showSnippets ? "▲" : "▼"}</button>
-        </div>
-        {#if showSnippets}
-          <div class="mt-1">
-            <SnippetPanel
-              currentSql={sqlQuery}
-              onselect={(sql) => { sqlQuery = sql; showSnippets = false; runQuery(true); }}
-            />
-          </div>
-        {/if}
-        <div class="flex items-center justify-between">
-          <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
-          <button
-            class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
-            disabled={!sqlQuery.trim() || running || !dbPath}
-            onclick={() => runQuery(true)}
+            class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md transition-colors cursor-pointer disabled:opacity-40 shrink-0"
+            disabled={!aiQuery.trim() || aiRunning || !dbPath}
+            onclick={runAiQuery}
           >
-            {running ? "Kör..." : "Kör"}
+            {aiRunning ? "Tänker..." : "Generera"}
           </button>
-        </div>
-        {#if !dbPath}
-          <p class="text-xs text-zinc-600">Ingen databas nedladdad ännu.</p>
         {/if}
       </div>
-    {/if}
+      {#if aiError}
+        <p class="text-xs text-red-400 mt-1">{aiError}</p>
+      {/if}
+    </div>
+
+    <!-- SQL-fält (alltid synligt) -->
+    <div class="px-3 pt-2 pb-3 flex flex-col gap-2">
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-zinc-600 shrink-0">SQL</span>
+        <div class="flex-1"></div>
+      </div>
+      <div class="relative">
+        <SqlEditor
+          bind:value={sqlQuery}
+          {schema}
+          onchange={(v) => (sqlQuery = v)}
+          onrun={() => runQuery(true)}
+        />
+        <button
+          onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
+          title={showSnippets ? "Dölj snippets" : "Visa snippets"}
+          class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none
+            {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
+        >{showSnippets ? "▲" : "▼"}</button>
+      </div>
+      {#if showSnippets}
+        <div class="mt-1">
+          <SnippetPanel
+            currentSql={sqlQuery}
+            onselect={(sql) => { sqlQuery = sql; showSnippets = false; runQuery(true); }}
+          />
+        </div>
+      {/if}
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
+        <button
+          class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
+          disabled={!sqlQuery.trim() || running || !dbPath}
+          onclick={() => runQuery(true)}
+        >
+          {running ? "Kör..." : "Kör"}
+        </button>
+      </div>
+      {#if !dbPath}
+        <p class="text-xs text-zinc-600">Ingen databas nedladdad ännu.</p>
+      {/if}
+    </div>
   </div>
 
   <!-- Resultat -->
@@ -326,12 +363,27 @@
           </p>
         {/if}
 
+        <!-- Gömda kolumner -->
+        {#if hiddenCols.size > 0}
+          <div class="shrink-0 flex items-center gap-1 px-3 py-1 border-b border-zinc-800 flex-wrap">
+            <span class="text-xs text-zinc-600 mr-1">Gömda:</span>
+            {#each [...hiddenCols] as col}
+              <button
+                onclick={() => { hiddenCols = new Set([...hiddenCols].filter(c => c !== col)); }}
+                class="px-1.5 py-0.5 text-xs rounded border border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:text-white hover:border-zinc-500 cursor-pointer transition-colors"
+                title="Visa kolumn"
+              >{col}</button>
+            {/each}
+          </div>
+        {/if}
+
         <!-- Tabell (scrollar, sticky header fungerar här) -->
         <div class="flex-1 overflow-auto min-h-0" use:hscroll>
           <table class="min-w-full text-xs text-left border-collapse">
             <thead>
               <tr>
                 {#each result.columns as col}
+                  {#if !hiddenCols.has(col)}
                   <th
                     class="group sticky top-0 px-3 py-2 font-medium whitespace-nowrap border-b border-zinc-800 z-10 select-none transition-colors
                       {sortKeys.some(k => k.col === col)
@@ -349,6 +401,11 @@
                           </span>
                         {/if}
                       </span>
+                      <button
+                        onclick={() => { hiddenCols = new Set([...hiddenCols, col]); }}
+                        class="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-green-500 transition-opacity cursor-pointer leading-none"
+                        title="Göm kolumn"
+                      >×</button>
                       {#if !sortKeys.some(k => k.col === col)}
                       <button
                         onclick={() => handleColRemove(col)}
@@ -368,6 +425,7 @@
                         placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
                     />
                   </th>
+                  {/if}
                 {/each}
               </tr>
             </thead>
@@ -379,15 +437,17 @@
                   onclick={(e) => toggleRowSelect(i, e.shiftKey)}
                   oncontextmenu={(e) => openContextMenu(e, i)}
                 >
-                  {#each row as cell}
+                  {#each result.columns as col, colIdx}
+                    {#if !hiddenCols.has(col)}
                     <td class="px-3 py-1.5 whitespace-nowrap max-w-xs truncate
                       {selectedRows.has(i) ? 'text-white' : 'text-zinc-300'}">
-                      {#if cell === null}
+                      {#if row[colIdx] === null}
                         <span class="text-zinc-600">NULL</span>
                       {:else}
-                        {String(cell)}
+                        {String(row[colIdx])}
                       {/if}
                     </td>
+                    {/if}
                   {/each}
                 </tr>
               {/each}

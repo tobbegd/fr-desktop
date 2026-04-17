@@ -1,9 +1,12 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { fade } from "svelte/transition";
   import Settings from "$lib/Settings.svelte";
   import SearchArea from "$lib/SearchArea.svelte";
+  import MenuBar from "$lib/MenuBar.svelte";
+  import type { MenuDef } from "$lib/MenuBar.svelte";
   import { loadPrefs, savePrefs } from "$lib/store";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
 
@@ -11,6 +14,8 @@
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
+  let settingsInitialSection = $state("general");
+  let ollamaReady = $state(false);
   let serverUrl = $state(import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se");
   let apiKey = $state("");
   let email = $state("");
@@ -103,11 +108,12 @@
     }
   }
 
-  // Kör manifest-check en gång per session när vi är i main-vyn
+  // Kör manifest-check + ollama-check en gång per session när vi är i main-vyn
   $effect(() => {
     if (view === "main" && !hasCheckedUpdate && tier) {
       hasCheckedUpdate = true;
       checkForUpdate();
+      invoke<boolean>("check_ollama").then(r => { ollamaReady = r; });
     }
   });
 
@@ -216,7 +222,24 @@
       loading = false;
     }
   }
+
+  const appMenus: MenuDef[] = [
+    {
+      label: "Företagsdatabasen",
+      items: [
+        { label: "Inställningar", action: () => { prevView = view; view = "settings"; } },
+        { separator: true },
+        { label: "Avsluta", shortcut: "Ctrl+Q", action: () => getCurrentWindow().close() },
+      ],
+    },
+  ];
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.ctrlKey && e.key === "q") { e.preventDefault(); getCurrentWindow().close(); }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 {#if view === "auth"}
   <div class="flex items-center justify-center h-screen bg-zinc-950">
@@ -271,16 +294,18 @@
     {email}
     {tier}
     {dbExportDate}
+    {dbPath}
+    initialSection={settingsInitialSection}
     onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
-    onClose={() => view = "main"}
+    onClose={() => { view = "main"; settingsInitialSection = "general"; }}
   />
 
 {:else}
   <div class="flex flex-col h-screen bg-zinc-950 text-white">
     <!-- Topmeny -->
-    <header class="h-10 flex items-center justify-between px-4 border-b border-zinc-800 shrink-0">
-      <span class="text-sm font-medium text-zinc-300">Företagsdatabasen</span>
-      <span class="text-xs text-zinc-500 flex items-center gap-2">
+    <header class="h-10 flex items-center justify-between px-2 border-b border-zinc-800 shrink-0">
+      <MenuBar menus={appMenus} />
+      <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {email}
         {#if isOnline === true}
           <span class="text-green-500" title="Ansluten">●</span>
@@ -288,14 +313,6 @@
           <span class="text-yellow-500" title="Offline ({offlineLogins}/{OFFLINE_MAX})">● offline ({offlineLogins}/{OFFLINE_MAX})</span>
         {/if}
       </span>
-      <nav class="flex items-center gap-1">
-        <button
-          class="px-3 py-1 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors cursor-pointer"
-          onclick={() => view = "settings"}
-        >
-          Settings
-        </button>
-      </nav>
     </header>
 
     <!-- Uppdateringsbanner -->
@@ -348,6 +365,10 @@
       </div>
     {/if}
 
-    <SearchArea {dbPath} />
+    <SearchArea
+      {dbPath}
+      {ollamaReady}
+      onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
+    />
   </div>
 {/if}

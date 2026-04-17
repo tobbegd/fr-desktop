@@ -1,4 +1,5 @@
 use base64::{Engine as _, engine::general_purpose};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -219,6 +220,7 @@ async fn download_db(
         out_path
     } else {
         let out_path = data_dir.join("foretagsdatabasen.sqlite");
+        let _ = tokio::fs::remove_file(&out_path).await;
         tokio::fs::rename(&temp_path, &out_path)
             .await
             .map_err(|e| e.to_string())?;
@@ -351,6 +353,141 @@ async fn save_file_binary(filename: String, data: String) -> Result<(), String> 
         .map_err(|e| e.to_string())
 }
 
+// ---- Ollama ----
+
+const OLLAMA_BASE: &str = "http://localhost:11434";
+
+#[tauri::command]
+async fn check_ollama() -> bool {
+    reqwest::Client::new()
+        .get(OLLAMA_BASE)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+#[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaModelInfo>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct OllamaModelInfo {
+    name: String,
+    size: u64,
+}
+
+#[tauri::command]
+async fn list_ollama_models() -> Result<Vec<OllamaModelInfo>, String> {
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/tags", OLLAMA_BASE))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let data: OllamaTagsResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(data.models)
+}
+
+#[derive(Serialize, Clone)]
+struct PullProgress {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct PullLine {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+async fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/pull", OLLAMA_BASE))
+        .json(&serde_json::json!({ "name": model }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim().to_string();
+            buffer = buffer[pos + 1..].to_string();
+            if line.is_empty() { continue; }
+            if let Ok(parsed) = serde_json::from_str::<PullLine>(&line) {
+                let done = parsed.status == "success";
+                let _ = app.emit("ollama-pull-progress", PullProgress {
+                    status: parsed.status,
+                    completed: parsed.completed,
+                    total: parsed.total,
+                });
+                if done { return Ok(()); }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct OllamaGenerateRequest {
+    model: String,
+    prompt: String,
+    stream: bool,
+}
+
+#[derive(Deserialize)]
+struct OllamaGenerateResponse {
+    response: String,
+}
+
+#[tauri::command]
+fn get_os() -> &'static str {
+    std::env::consts::OS
+}
+
+#[tauri::command]
+async fn delete_ollama_model(model: String) -> Result<(), String> {
+    let resp = reqwest::Client::new()
+        .delete(format!("{}/api/delete", OLLAMA_BASE))
+        .json(&serde_json::json!({ "name": model }))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Kunde inte ta bort modell: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn query_ollama(model: String, prompt: String) -> Result<String, String> {
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/generate", OLLAMA_BASE))
+        .json(&OllamaGenerateRequest { model, prompt, stream: false })
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Ollama-fel: {}", resp.status()));
+    }
+
+    let data: OllamaGenerateResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(data.response)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -363,7 +500,13 @@ pub fn run() {
             query_db,
             get_schema,
             save_file,
-            save_file_binary
+            save_file_binary,
+            get_os,
+            check_ollama,
+            list_ollama_models,
+            pull_ollama_model,
+            delete_ollama_model,
+            query_ollama
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,21 +1,26 @@
 <script lang="ts">
+  import AiSetup from "$lib/AiSetup.svelte";
+
   type Props = {
     serverUrl: string;
     apiKey: string;
     email: string;
     tier: string;
     dbExportDate: string;
+    dbPath: string;
+    initialSection?: string;
     onChangeKey: () => void;
     onClose: () => void;
   };
 
-  let { serverUrl, apiKey, email, tier, dbExportDate, onChangeKey, onClose }: Props = $props();
+  let { serverUrl, apiKey, email, tier, dbExportDate, dbPath, initialSection = "general", onChangeKey, onClose }: Props = $props();
 
-  let activeSection = $state("general");
+  let activeSection = $state(initialSection);
 
   const nav = [
     { id: "general", label: "Allmänt" },
     { id: "auth", label: "Autentisering" },
+    { id: "ai", label: "AI-assistent" },
   ];
 
   function maskedKey(key: string) {
@@ -96,6 +101,8 @@
             Ändra nyckel
           </button>
         </div>
+      {:else if activeSection === "ai"}
+        <AiSetup {dbPath} />
       {/if}
     </div>
   </div>

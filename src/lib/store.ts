@@ -18,6 +18,7 @@ export interface Prefs {
   dbPath: string;
   dbExportDate: string;
   offlineLogins: number;
+  aiModel: string;
 }
 
 const defaults: Prefs = {
@@ -31,6 +32,7 @@ const defaults: Prefs = {
   dbPath: "",
   dbExportDate: "",
   offlineLogins: 0,
+  aiModel: "",
 };
 
 export async function loadPrefs(): Promise<Prefs> {
