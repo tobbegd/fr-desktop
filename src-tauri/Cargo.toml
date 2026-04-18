@@ -27,7 +27,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util"] }
 sha2 = "0.10"
 zip = "2"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 rfd = "0.15"
 base64 = "0.22"
 futures-util = "0.3"

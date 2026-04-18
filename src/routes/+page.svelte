@@ -108,11 +108,17 @@
     }
   }
 
-  // Kör manifest-check + ollama-check en gång per session när vi är i main-vyn
+  // Kör manifest-check en gång per session när vi är i main-vyn
   $effect(() => {
     if (view === "main" && !hasCheckedUpdate && tier) {
       hasCheckedUpdate = true;
       checkForUpdate();
+    }
+  });
+
+  // Kör ollama-check varje gång man går till main-vyn
+  $effect(() => {
+    if (view === "main" && tier) {
       invoke<boolean>("check_ollama").then(r => { ollamaReady = r; });
     }
   });
@@ -229,13 +235,13 @@
       items: [
         { label: "Inställningar", action: () => { prevView = view; view = "settings"; } },
         { separator: true },
-        { label: "Avsluta", shortcut: "Ctrl+Q", action: () => getCurrentWindow().close() },
+        { label: "Avsluta", shortcut: "Ctrl+Q", action: () => invoke("quit") },
       ],
     },
   ];
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.ctrlKey && e.key === "q") { e.preventDefault(); getCurrentWindow().close(); }
+    if (e.ctrlKey && e.key === "q") { e.preventDefault(); invoke("quit"); }
   }
 </script>
 

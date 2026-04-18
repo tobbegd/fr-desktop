@@ -9,10 +9,9 @@
   let { dbPath }: Props = $props();
 
   const PRESET_MODELS = [
-    { name: "duckdb-nsql:7b-q8_0", label: "DuckDB NSQL 7B",    size: "7.7 GB", note: "Specialiserad text-to-SQL" },
-    { name: "qwen2.5-coder:7b",    label: "Qwen 2.5 Coder 7B", size: "4.7 GB", note: "" },
-    { name: "qwen2.5-coder:3b",    label: "Qwen 2.5 Coder 3B", size: "2.0 GB", note: "Snabbare, lite sämre" },
-    { name: "llama3.2:3b",         label: "Llama 3.2 3B",       size: "2.0 GB", note: "Generell, liten" },
+    { name: "qwen2.5-coder:7b",    label: "Qwen 2.5 Coder 7B", size: "4.7 GB", note: "Rekommenderas" },
+    { name: "qwen2.5-coder:3b",    label: "Qwen 2.5 Coder 3B", size: "2.0 GB", note: "" },
+    { name: "llama3.2:3b",         label: "Llama 3.2 3B",       size: "2.0 GB", note: "" },
   ];
 
   type OllamaStatus = "unknown" | "running" | "offline";
@@ -20,6 +19,7 @@
 
   let ollamaStatus = $state<OllamaStatus>("unknown");
   let checking = $state(false);
+  let lastCheckFailed = $state(false);
   let showUninstall = $state(false);
 
   let models = $state<ModelInfo[]>([]);
@@ -41,6 +41,37 @@
 
   let currentOs = $state("linux");
 
+  let installing = $state(false);
+  let installStatus = $state("");
+  let installError = $state("");
+
+  async function installOllama() {
+    installing = true;
+    installStatus = "Förbereder...";
+    installError = "";
+    const unlisten = await listen<string>("ollama-install-status", (e) => {
+      installStatus = e.payload;
+    });
+    try {
+      await invoke("install_ollama");
+      if (installStatus !== "terminal-opened") {
+        installStatus = "Installeraren startad — klicka Kontrollera när den är klar.";
+      } else {
+        installStatus = "Terminal öppnad — klicka Kontrollera när installationen är klar.";
+      }
+    } catch (e) {
+      const msg = String(e);
+      if (msg === "unsupported") {
+        installError = "";
+      } else {
+        installError = msg;
+      }
+    } finally {
+      unlisten();
+      installing = false;
+    }
+  }
+
   loadPrefs().then(p => {
     if (p.aiModel) activeModel = p.aiModel;
   });
@@ -48,12 +79,14 @@
 
   async function checkOllama() {
     checking = true;
+    lastCheckFailed = false;
     ollamaStatus = "unknown";
     models = [];
     try {
       const running = await invoke<boolean>("check_ollama");
       ollamaStatus = running ? "running" : "offline";
       if (running) await loadModels();
+      else lastCheckFailed = true;
     } finally {
       checking = false;
     }
@@ -143,7 +176,7 @@
       const schema = await invoke<Record<string, string[]>>("get_schema", { dbPath });
       const sql = await invoke<string>("query_ollama", {
         model,
-        prompt: buildPrompt(schema, testPrompt, model),
+        prompt: buildPrompt(schema, testPrompt),
       });
       testResult = sql.trim();
     } catch (e) {
@@ -181,6 +214,12 @@
       >
         {checking ? "Kontrollerar..." : "Kontrollera"}
       </button>
+      {#if lastCheckFailed}
+        <span class="text-xs text-yellow-500">
+          Hittades inte —
+          {#if currentOs === "linux"}starta med: <code class="bg-zinc-800 px-1 rounded">sudo systemctl start ollama</code>{:else}är Ollama igång?{/if}
+        </span>
+      {/if}
       {#if ollamaStatus === "running"}
         <button
           class="px-3 py-1 text-xs text-red-500 hover:text-red-400 transition-colors cursor-pointer"
@@ -194,16 +233,41 @@
     {#if ollamaStatus === "offline"}
       <div class="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-sm text-zinc-400 flex flex-col gap-3">
         <p>Ollama behöver installeras för att AI-funktionen ska fungera.</p>
-        <button
-          class="w-fit px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md transition-colors cursor-pointer"
-          onclick={() => openUrl("https://ollama.com/download")}
-        >
-          Öppna ollama.com/download
-        </button>
-        <p class="text-xs text-zinc-600">
-          Windows: kör den nedladdade .exe-filen.<br>
-          Linux: <code class="bg-zinc-800 px-1 rounded">curl -fsSL https://ollama.com/install.sh | sh</code>
-        </p>
+
+        {#if currentOs === "linux" || currentOs === "windows"}
+          {#if installing}
+            <p class="text-xs text-zinc-300">{installStatus}</p>
+          {:else if installStatus && !installError}
+            <p class="text-xs text-green-400">{installStatus}</p>
+          {:else}
+            <button
+              class="w-fit px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer"
+              onclick={installOllama}
+            >
+              Installera automatiskt
+            </button>
+          {/if}
+          {#if installError}
+            <p class="text-xs text-red-400">{installError}</p>
+            <p class="text-xs text-zinc-600">Manuell installation:</p>
+          {/if}
+        {/if}
+
+        {#if !installing && (currentOs === "mac" || installError)}
+          {#if currentOs !== "mac"}
+          <p class="text-xs text-zinc-600">
+            Windows: kör den nedladdade .exe-filen.<br>
+            Linux: <code class="bg-zinc-800 px-1 rounded">curl -fsSL https://ollama.com/install.sh | sh</code>
+          </p>
+          {:else}
+          <button
+            class="w-fit px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md transition-colors cursor-pointer"
+            onclick={() => openUrl("https://ollama.com/download")}
+          >
+            Öppna ollama.com/download
+          </button>
+          {/if}
+        {/if}
       </div>
     {/if}
 

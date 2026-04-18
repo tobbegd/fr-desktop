@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
   import { EditorState } from "@codemirror/state";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -19,15 +19,15 @@
   let container: HTMLDivElement;
   let view: EditorView | null = null;
 
-  onMount(() => {
-    const sqlSchema: Record<string, string[]> = schema;
+  function buildEditor(currentSchema: Record<string, string[]>) {
+    view?.destroy();
 
-    const tables = Object.keys(sqlSchema);
+    const tables = Object.keys(currentSchema);
     const placeholderText = tables.length
       ? `SELECT * FROM ${tables.join("|")} LIMIT 10`
       : "SELECT * FROM bolag LIMIT 10";
 
-    const allColumns = [...new Set(Object.values(sqlSchema).flat())].map((col) => ({
+    const allColumns = [...new Set(Object.values(currentSchema).flat())].map((col) => ({
       label: col,
       type: "property",
     }));
@@ -50,7 +50,7 @@
           ...historyKeymap,
         ]),
         autocompletion(),
-        sql({ dialect: SQLite, schema: sqlSchema, upperCaseKeywords: true }),
+        sql({ dialect: SQLite, schema: currentSchema, upperCaseKeywords: true }),
         EditorState.languageData.of(() => [{ autocomplete: columnFallback }]),
         oneDark,
         EditorView.theme({
@@ -73,9 +73,14 @@
     });
 
     view = new EditorView({ state: startState, parent: container });
-  });
+  }
 
+  onMount(() => buildEditor(schema));
   onDestroy(() => view?.destroy());
+
+  $effect(() => {
+    if (Object.keys(schema).length > 0) untrack(() => buildEditor(schema));
+  });
 
   $effect(() => {
     if (view && value !== view.state.doc.toString()) {

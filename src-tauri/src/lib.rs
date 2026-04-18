@@ -246,6 +246,7 @@ async fn get_schema(db_path: String) -> Result<std::collections::HashMap<String,
             .query_map([], |row| row.get(0))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
+            .filter(|t| t != "ai_expl")
             .collect();
 
         let mut schema = std::collections::HashMap::new();
@@ -266,6 +267,43 @@ async fn get_schema(db_path: String) -> Result<std::collections::HashMap<String,
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn get_ai_explanations(db_path: String) -> Result<std::collections::HashMap<String, std::collections::HashMap<String, String>>, String> {
+    tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_expl'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !exists {
+            return Ok(std::collections::HashMap::new());
+        }
+        let mut stmt = conn
+            .prepare("SELECT tabell, kolumn, beskrivning FROM ai_expl")
+            .map_err(|e| e.to_string())?;
+        let mut result: std::collections::HashMap<String, std::collections::HashMap<String, String>> = std::collections::HashMap::new();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows.filter_map(|r| r.ok()) {
+            result.entry(row.0).or_default().insert(row.1, row.2);
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---- Query DB ----
 
 #[derive(Serialize)]
@@ -278,9 +316,22 @@ struct QueryResult {
 const MAX_ROWS: usize = 50_000;
 
 #[tauri::command]
+fn register_ulow(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.create_scalar_function(
+        "ulow", 1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx: &rusqlite::functions::Context| {
+            let s: String = ctx.get(0)?;
+            Ok(s.to_lowercase())
+        },
+    )
+}
+
+#[tauri::command]
 async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
     tokio::task::spawn_blocking(move || {
         let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+        register_ulow(&conn).map_err(|e| e.to_string())?;
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let columns: Vec<String> = stmt.column_names().iter().map(|&s| s.to_string()).collect();
         let col_count = columns.len();
@@ -456,6 +507,52 @@ fn get_os() -> &'static str {
 }
 
 #[tauri::command]
+async fn install_ollama(app: AppHandle) -> Result<(), String> {
+    match std::env::consts::OS {
+        "linux" => {
+            let wrapper = "#!/bin/bash\ncurl -fsSL https://ollama.com/install.sh | sh\nsudo mkdir -p /usr/share/ollama\nsudo chown ollama:ollama /usr/share/ollama\nsudo systemctl restart ollama\necho\necho 'Ollama installerat. Tryck Enter för att stänga.'\nread\n";
+            let wrapper_path = "/tmp/ollama_install_run.sh";
+            std::fs::write(wrapper_path, wrapper).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(wrapper_path, std::fs::Permissions::from_mode(0o755));
+            }
+            let terminals: &[(&str, &[&str])] = &[
+                ("x-terminal-emulator", &["-e", wrapper_path]),
+                ("gnome-terminal",      &["--", wrapper_path]),
+                ("konsole",             &["-e", wrapper_path]),
+                ("xterm",               &["-e", wrapper_path]),
+            ];
+            for (term, args) in terminals {
+                if std::process::Command::new(term).args(*args).spawn().is_ok() {
+                    let _ = app.emit("ollama-install-status", "terminal-opened");
+                    return Ok(());
+                }
+            }
+            Err("Ingen terminal hittades".to_string())
+        }
+        "windows" => {
+            let _ = app.emit("ollama-install-status", "Laddar ner installerare...");
+            let bytes = reqwest::get("https://ollama.com/download/OllamaSetup.exe")
+                .await
+                .map_err(|e| format!("Kunde inte ladda ner: {e}"))?
+                .bytes()
+                .await
+                .map_err(|e| e.to_string())?;
+            let temp_path = std::env::temp_dir().join("OllamaSetup.exe");
+            std::fs::write(&temp_path, &bytes).map_err(|e| e.to_string())?;
+            let _ = app.emit("ollama-install-status", "Startar installerare...");
+            std::process::Command::new(&temp_path)
+                .spawn()
+                .map_err(|e| format!("Kunde inte starta installerare: {e}"))?;
+            Ok(())
+        }
+        _ => Err("unsupported".to_string()),
+    }
+}
+
+#[tauri::command]
 async fn delete_ollama_model(model: String) -> Result<(), String> {
     let resp = reqwest::Client::new()
         .delete(format!("{}/api/delete", OLLAMA_BASE))
@@ -468,6 +565,11 @@ async fn delete_ollama_model(model: String) -> Result<(), String> {
         return Err(format!("Kunde inte ta bort modell: {}", resp.status()));
     }
     Ok(())
+}
+
+#[tauri::command]
+fn quit(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -499,6 +601,7 @@ pub fn run() {
             download_db,
             query_db,
             get_schema,
+            get_ai_explanations,
             save_file,
             save_file_binary,
             get_os,
@@ -506,7 +609,9 @@ pub fn run() {
             list_ollama_models,
             pull_ollama_model,
             delete_ollama_model,
-            query_ollama
+            query_ollama,
+            install_ollama,
+            quit
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

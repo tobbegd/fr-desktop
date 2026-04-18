@@ -3,9 +3,10 @@
   import SqlEditor from "./SqlEditor.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import SnippetPanel from "./SnippetPanel.svelte";
+  import SchemaPanel from "./SchemaPanel.svelte";
   import ExportPanel from "./ExportPanel.svelte";
   import { loadPrefs } from "$lib/store";
-  import { buildPrompt } from "$lib/aiPrompt";
+  import { buildPrompt, type AiExpl } from "$lib/aiPrompt";
 
   type Props = {
     dbPath: string;
@@ -16,6 +17,7 @@
 
   let showSnippets = $state(false);
   let blinkSnippet = $state(false);
+  let showSchema = $state(false);
   let blinkTimer: ReturnType<typeof setTimeout> | null = null;
   let sqlQuery = $state("");
 
@@ -23,12 +25,17 @@
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
+  let aiAutoExec = $state(true);
   let schema = $state<Record<string, string[]>>({});
+  let aiExpl = $state<AiExpl>({});
 
   async function loadSchema() {
     if (!dbPath) return;
     try {
-      schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
+      [schema, aiExpl] = await Promise.all([
+        tauri<Record<string, string[]>>("get_schema", { dbPath }),
+        tauri<AiExpl>("get_ai_explanations", { dbPath }).catch(() => ({} as AiExpl)),
+      ]);
     } catch {}
   }
 
@@ -57,7 +64,7 @@
   let excludedRows = $state(new Set<number>());
   let hiddenCols = $state(new Set<string>());
   let colFilters = $state<Record<string, string>>({});
-  let contextMenu = $state<{ x: number; y: number; rowIdx: number } | null>(null);
+  let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string } | null>(null);
 
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
 
@@ -151,6 +158,14 @@
   }
 
   let lastClickedRow = $state<number | null>(null);
+  let copiedFeedback = $state("");
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flashCopied(val: string) {
+    copiedFeedback = `Kopierade "${val.length > 30 ? val.slice(0, 30) + "…" : val}"`;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copiedFeedback = ""; }, 2000);
+  }
 
   function toggleRowSelect(i: number, shift: boolean) {
     const s = new Set(selectedRows);
@@ -169,9 +184,9 @@
     selectedRows = s;
   }
 
-  function openContextMenu(e: MouseEvent, rowIdx: number) {
+  function openContextMenu(e: MouseEvent, rowIdx: number, cellValue?: string) {
     e.preventDefault();
-    contextMenu = { x: e.clientX, y: e.clientY, rowIdx };
+    contextMenu = { x: e.clientX, y: e.clientY, rowIdx, cellValue };
   }
 
   function deleteRow(i: number) {
@@ -219,6 +234,19 @@
 
   let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
 
+  function fixSql(sql: string): string {
+    // ILIKE doesn't exist in SQLite
+    let fixed = sql.replace(/(\w+)\s+ILIKE\s+('[^']*')/gi, "LOWER($1) LIKE LOWER($2)");
+    // Normalize all postort comparisons to ulow() which handles Swedish chars correctly
+    fixed = fixed.replace(/LOWER\s*\(\s*postort\s*\)\s+LIKE\s+LOWER\s*\(\s*'([^']*)'\s*\)/gi,
+      (_, term) => `ulow(postort) LIKE '${term.toLowerCase()}'`);
+    fixed = fixed.replace(/postort\s*=\s*'([^']*)'/gi,
+      (_, term) => `ulow(postort) LIKE '%${term.toLowerCase()}%'`);
+    fixed = fixed.replace(/postort\s+LIKE\s+'([^']*)'/gi,
+      (_, term) => `ulow(postort) LIKE '${term.toLowerCase()}'`);
+    return fixed;
+  }
+
   async function runAiQuery() {
     if (!aiQuery.trim()) return;
     aiRunning = true;
@@ -233,9 +261,10 @@
         .join("\n");
       const sql = await tauri<string>("query_ollama", {
         model,
-        prompt: buildPrompt(schema, aiQuery, model),
+        prompt: buildPrompt(schema, aiQuery, aiExpl),
       });
-      sqlQuery = sql.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim();
+      sqlQuery = fixSql(sql.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim());
+      if (aiAutoExec) runQuery(true);
     } catch (e) {
       aiError = String(e);
     } finally {
@@ -296,6 +325,10 @@
           >
             {aiRunning ? "Tänker..." : "Generera"}
           </button>
+          <label class="flex items-center gap-1.5 cursor-pointer shrink-0 select-none">
+            <input type="checkbox" bind:checked={aiAutoExec} class="accent-zinc-400 cursor-pointer" />
+            <span class="text-xs text-zinc-500">auto</span>
+          </label>
         {/if}
       </div>
       {#if aiError}
@@ -331,8 +364,19 @@
           />
         </div>
       {/if}
+      {#if showSchema}
+        <div class="mt-1 bg-zinc-900 border border-zinc-800 rounded-lg">
+          <SchemaPanel {dbPath} />
+        </div>
+      {/if}
       <div class="flex items-center justify-between">
-        <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
+          <button
+            onclick={() => showSchema = !showSchema}
+            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+          >{showSchema ? "Dölj schema" : "Visa schema"}</button>
+        </div>
         <button
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
           disabled={!sqlQuery.trim() || running || !dbPath}
@@ -440,7 +484,10 @@
                   {#each result.columns as col, colIdx}
                     {#if !hiddenCols.has(col)}
                     <td class="px-3 py-1.5 whitespace-nowrap max-w-xs truncate
-                      {selectedRows.has(i) ? 'text-white' : 'text-zinc-300'}">
+                      {selectedRows.has(i) ? 'text-white' : 'text-zinc-300'}"
+                      oncontextmenu={(e) => { e.stopPropagation(); openContextMenu(e, i, row[colIdx] !== null && row[colIdx] !== undefined ? String(row[colIdx]) : undefined); }}
+                      ondblclick={(e) => { e.stopPropagation(); if (row[colIdx] !== null && row[colIdx] !== undefined) { const v = String(row[colIdx]); navigator.clipboard.writeText(v); flashCopied(v); } }}
+                    >
                       {#if row[colIdx] === null}
                         <span class="text-zinc-600">NULL</span>
                       {:else}
@@ -471,6 +518,9 @@
             {/if}
             {#if selectedRows.size > 0}
               <span class="text-amber-400">· {selectedRows.size} markerade</span>
+            {/if}
+            {#if copiedFeedback}
+              <span class="text-green-400">· {copiedFeedback}</span>
             {/if}
           </span>
           <div class="flex items-center gap-3">
@@ -515,6 +565,10 @@
     y={contextMenu.y}
     onclose={() => contextMenu = null}
     items={[
+      contextMenu.cellValue !== undefined
+        ? { label: `Kopiera "${contextMenu.cellValue.length > 30 ? contextMenu.cellValue.slice(0, 30) + "…" : contextMenu.cellValue}" (dubbelklicka på cell)`, action: () => navigator.clipboard.writeText(contextMenu!.cellValue ?? "") }
+        : { label: "Dubbelklicka på en cell för att kopiera värdet", disabled: true },
+      { separator: true },
       {
         label: `Exportera markerade (${selectedRows.size})`,
         action: () => exportPanel = { rows: filteredRows.filter(({ i }) => selectedRows.has(i)).map(({ row }) => row), label: "markerade rader" },
