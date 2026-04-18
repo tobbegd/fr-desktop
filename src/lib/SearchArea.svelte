@@ -323,7 +323,18 @@
             disabled={!aiQuery.trim() || aiRunning || !dbPath}
             onclick={runAiQuery}
           >
-            {aiRunning ? "Tänker..." : "Generera"}
+            {#if aiRunning}
+              <span class="flex items-center gap-1.5">
+                <span class="flex gap-0.5">
+                  <span class="w-1 h-1 rounded-full bg-rose-400 animate-bounce [animation-delay:0ms]"></span>
+                  <span class="w-1 h-1 rounded-full bg-amber-400 animate-bounce [animation-delay:150ms]"></span>
+                  <span class="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:300ms]"></span>
+                </span>
+                Tänker
+              </span>
+            {:else}
+              Generera
+            {/if}
           </button>
           <label class="flex items-center gap-1.5 cursor-pointer shrink-0 select-none">
             <input type="checkbox" bind:checked={aiAutoExec} class="accent-zinc-400 cursor-pointer" />
