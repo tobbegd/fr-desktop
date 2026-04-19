@@ -1,8 +1,11 @@
 <script lang="ts">
   import { invoke as tauri } from "@tauri-apps/api/core";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { Store } from "@tauri-apps/plugin-store";
   import SqlEditor from "./SqlEditor.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import SnippetPanel from "./SnippetPanel.svelte";
+  import HistoryPanel from "./HistoryPanel.svelte";
   import SchemaPanel from "./SchemaPanel.svelte";
   import ExportPanel from "./ExportPanel.svelte";
   import { loadPrefs } from "$lib/store";
@@ -16,6 +19,9 @@
   let { dbPath, ollamaReady, onOpenAiSettings }: Props = $props();
 
   let showSnippets = $state(false);
+  let showHistory = $state(false);
+  let queryHistory = $state<string[]>([]);
+  let historyStore: Store | null = null;
   let blinkSnippet = $state(false);
   let showSchema = $state(false);
   let blinkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -42,6 +48,27 @@
   $effect(() => {
     if (dbPath) loadSchema();
   });
+
+  async function loadHistory() {
+    historyStore = await Store.load("history.json");
+    queryHistory = (await historyStore.get<string[]>("queries")) ?? [];
+  }
+
+  async function addToHistory(sql: string) {
+    const trimmed = sql.trim();
+    if (!trimmed || queryHistory.includes(trimmed)) return;
+    queryHistory = [trimmed, ...queryHistory].slice(0, 10);
+    await historyStore?.set("queries", queryHistory);
+    await historyStore?.save();
+  }
+
+  async function removeFromHistory(sql: string) {
+    queryHistory = queryHistory.filter(q => q !== sql);
+    await historyStore?.set("queries", queryHistory);
+    await historyStore?.save();
+  }
+
+  $effect(() => { loadHistory(); });
   function hscroll(node: HTMLElement) {
     function onWheel(e: WheelEvent) {
       if (!e.shiftKey) return;
@@ -64,7 +91,7 @@
   let excludedRows = $state(new Set<number>());
   let hiddenCols = $state(new Set<string>());
   let colFilters = $state<Record<string, string>>({});
-  let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string } | null>(null);
+  let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string; url?: string } | null>(null);
 
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
 
@@ -186,7 +213,18 @@
 
   function openContextMenu(e: MouseEvent, rowIdx: number, cellValue?: string) {
     e.preventDefault();
-    contextMenu = { x: e.clientX, y: e.clientY, rowIdx, cellValue };
+    let url: string | undefined;
+    if (result) {
+      const urlColIdx = result.columns.indexOf("webbadress");
+      if (urlColIdx !== -1) {
+        const raw = result.rows[rowIdx]?.[urlColIdx];
+        if (raw) {
+          url = String(raw);
+          if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+        }
+      }
+    }
+    contextMenu = { x: e.clientX, y: e.clientY, rowIdx, cellValue, url };
   }
 
   function deleteRow(i: number) {
@@ -289,6 +327,7 @@
         "query_db",
         { dbPath, sql: sqlQuery }
       );
+      addToHistory(sqlQuery);
     } catch (e) {
       error = String(e);
     } finally {
@@ -361,7 +400,7 @@
           onrun={() => runQuery(true)}
         />
         <button
-          onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
+          onclick={() => { showSnippets = !showSnippets; showHistory = false; blinkSnippet = false; }}
           title={showSnippets ? "Dölj snippets" : "Visa snippets"}
           class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-0.5 text-xs rounded-full border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none
             {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
@@ -372,6 +411,15 @@
           <SnippetPanel
             currentSql={sqlQuery}
             onselect={(sql) => { sqlQuery = sql; showSnippets = false; runQuery(true); }}
+          />
+        </div>
+      {/if}
+      {#if showHistory}
+        <div class="mt-1">
+          <HistoryPanel
+            items={queryHistory}
+            onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
+            onremove={removeFromHistory}
           />
         </div>
       {/if}
@@ -387,6 +435,10 @@
             onclick={() => showSchema = !showSchema}
             class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
           >{showSchema ? "Dölj schema" : "Visa schema"}</button>
+          <button
+            onclick={() => showHistory = !showHistory}
+            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+          >{showHistory ? "Dölj historik" : "Historik"}</button>
         </div>
         <button
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
@@ -579,6 +631,9 @@
       contextMenu.cellValue !== undefined
         ? { label: `Kopiera "${contextMenu.cellValue.length > 30 ? contextMenu.cellValue.slice(0, 30) + "…" : contextMenu.cellValue}" (dubbelklicka på cell)`, action: () => navigator.clipboard.writeText(contextMenu!.cellValue ?? "") }
         : { label: "Dubbelklicka på en cell för att kopiera värdet", disabled: true },
+      contextMenu.url
+        ? { label: `Öppna webbplats: ${contextMenu.url.length > 40 ? contextMenu.url.slice(0, 40) + "…" : contextMenu.url}`, action: () => openUrl(contextMenu!.url!) }
+        : { label: "Ingen webbadress för denna rad", disabled: true },
       { separator: true },
       {
         label: `Exportera markerade (${selectedRows.size})`,
