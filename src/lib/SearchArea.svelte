@@ -8,6 +8,8 @@
   import HistoryPanel from "./HistoryPanel.svelte";
   import SchemaPanel from "./SchemaPanel.svelte";
   import ExportPanel from "./ExportPanel.svelte";
+  import NyckeltaPanel from "./NyckeltaPanel.svelte";
+  import KartaPanel from "./KartaPanel.svelte";
   import { loadPrefs } from "$lib/store";
   import { buildPrompt, type AiExpl } from "$lib/aiPrompt";
 
@@ -92,6 +94,45 @@
   let hiddenCols = $state(new Set<string>());
   let colFilters = $state<Record<string, string>>({});
   let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string; url?: string } | null>(null);
+  let nyckeltaPanel = $state<{ orgnr: string; orgnamn: string } | null>(null);
+  let kartaPanel = $state<{ orgnr: string; orgnamn: string; lat: number | null; lon: number | null; postort_lat: number | null; postort_lon: number | null; postort: string | null; gatuadress: string | null }[] | null>(null);
+
+  function getKartaRows(rowIndices: number[]) {
+    if (!result) return [];
+    const ci = (col: string) => result!.columns.indexOf(col);
+    return rowIndices.map(i => {
+      const r = result!.rows[i];
+      const n = (col: string) => { const v = r[ci(col)]; return (v !== null && v !== undefined && v !== "") ? Number(v) : null; };
+      const s = (col: string) => { const v = r[ci(col)]; return (v !== null && v !== undefined && v !== "") ? String(v) : null; };
+      return {
+        orgnr: s("orgnr") ?? "",
+        orgnamn: s("orgnamn") ?? s("orgnr") ?? "",
+        lat: n("lat"), lon: n("lon"),
+        postort_lat: n("postort_lat"), postort_lon: n("postort_lon"),
+        postort: s("postort"), gatuadress: s("gatuadress"),
+      };
+    }).filter(b => (b.lat !== null && b.lon !== null) || (b.postort_lat !== null && b.postort_lon !== null));
+  }
+  let hoveredRow = $state<number | null>(null);
+
+  const ROW_INDICATORS = [
+    { key: "ar_year",    label: "Nyckeltal", icon: "📊" },
+    { key: "webbadress", label: "Webb",      icon: "🌐" },
+    { key: "email",      label: "E-post",    icon: "✉️" },
+    { key: "telefon",    label: "Telefon",   icon: "📞" },
+    { key: "lon",        label: "Karta",     icon: "📍" },
+  ] as const;
+
+  const hoveredIndicators = $derived.by(() => {
+    if (hoveredRow === null || !result) return null;
+    const row = result.rows[hoveredRow];
+    if (!row) return null;
+    return ROW_INDICATORS.map(ind => {
+      const idx = result!.columns.indexOf(ind.key);
+      const val = idx !== -1 ? row[idx] : null;
+      return { ...ind, active: val !== null && val !== undefined && val !== "" };
+    });
+  });
 
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
 
@@ -101,7 +142,7 @@
       if (excludedRows.has(i)) return false;
       for (const [col, filter] of Object.entries(colFilters)) {
         if (!filter) continue;
-        const colIdx = result.columns.indexOf(col);
+        const colIdx = result!.columns.indexOf(col);
         if (colIdx === -1) continue;
         const cell = row[colIdx];
         const val = cell === null || cell === undefined ? "" : String(cell).toLowerCase();
@@ -225,6 +266,17 @@
       }
     }
     contextMenu = { x: e.clientX, y: e.clientY, rowIdx, cellValue, url };
+  }
+
+  function getRowMeta(rowIdx: number): { orgnr: string; orgnamn: string } | null {
+    if (!result) return null;
+    const orgnrIdx = result.columns.indexOf("orgnr");
+    const orgnamnIdx = result.columns.indexOf("orgnamn");
+    if (orgnrIdx === -1) return null;
+    const orgnr = result.rows[rowIdx]?.[orgnrIdx];
+    const orgnamn = orgnamnIdx !== -1 ? result.rows[rowIdx]?.[orgnamnIdx] : null;
+    if (!orgnr) return null;
+    return { orgnr: String(orgnr), orgnamn: orgnamn ? String(orgnamn) : String(orgnr) };
   }
 
   function deleteRow(i: number) {
@@ -391,6 +443,20 @@
       <div class="flex items-center gap-2">
         <span class="text-xs text-zinc-600 shrink-0">SQL</span>
         <div class="flex-1"></div>
+        <div class="flex items-center gap-2">
+          {#each ROW_INDICATORS as ind}
+            {@const active = hoveredIndicators?.find(h => h.key === ind.key)?.active ?? false}
+            <span class="relative group">
+              <span
+                class="text-sm transition-all duration-150 select-none cursor-default"
+                class:opacity-10={!hoveredIndicators}
+                class:opacity-15={hoveredIndicators && !active}
+                class:opacity-100={active}
+              >{ind.icon}</span>
+              <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 text-xs rounded bg-zinc-800 text-zinc-300 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">{ind.label}</span>
+            </span>
+          {/each}
+        </div>
       </div>
       <div class="relative">
         <SqlEditor
@@ -428,7 +494,7 @@
           <SchemaPanel {dbPath} />
         </div>
       {/if}
-      <div class="flex items-center justify-between">
+<div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
           <button
@@ -543,6 +609,8 @@
                     {selectedRows.has(i) ? 'bg-amber-900/40' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
                   onclick={(e) => toggleRowSelect(i, e.shiftKey)}
                   oncontextmenu={(e) => openContextMenu(e, i)}
+                  onmouseenter={() => hoveredRow = i}
+                  onmouseleave={() => hoveredRow = null}
                 >
                   {#each result.columns as col, colIdx}
                     {#if !hiddenCols.has(col)}
@@ -621,6 +689,19 @@
   {/if}
 </div>
 
+{#if kartaPanel}
+  <KartaPanel bolag={kartaPanel} onclose={() => kartaPanel = null} />
+{/if}
+
+{#if nyckeltaPanel}
+  <NyckeltaPanel
+    {dbPath}
+    orgnr={nyckeltaPanel.orgnr}
+    orgnamn={nyckeltaPanel.orgnamn}
+    onclose={() => nyckeltaPanel = null}
+  />
+{/if}
+
 {#if contextMenu}
   {@const rowIdx = contextMenu.rowIdx}
   <ContextMenu
@@ -630,10 +711,23 @@
     items={[
       contextMenu.cellValue !== undefined
         ? { label: `Kopiera "${contextMenu.cellValue.length > 30 ? contextMenu.cellValue.slice(0, 30) + "…" : contextMenu.cellValue}" (dubbelklicka på cell)`, action: () => navigator.clipboard.writeText(contextMenu!.cellValue ?? "") }
-        : { label: "Dubbelklicka på en cell för att kopiera värdet", disabled: true },
+        : { label: "Dubbelklicka på en cell för att kopiera värdet", action: () => {}, disabled: true },
       contextMenu.url
         ? { label: `Öppna webbplats: ${contextMenu.url.length > 40 ? contextMenu.url.slice(0, 40) + "…" : contextMenu.url}`, action: () => openUrl(contextMenu!.url!) }
-        : { label: "Ingen webbadress för denna rad", disabled: true },
+        : { label: "Ingen webbadress för denna rad", action: () => {}, disabled: true },
+      (() => {
+        const meta = getRowMeta(rowIdx);
+        return meta
+          ? { label: `Visa nyckeltal: ${meta.orgnamn.length > 35 ? meta.orgnamn.slice(0, 35) + "…" : meta.orgnamn}`, action: () => { nyckeltaPanel = meta; } }
+          : { label: "Ingen orgnr på denna rad", action: () => {}, disabled: true };
+      })(),
+      (() => {
+        const rows = getKartaRows(selectedRows.size > 0 ? [...selectedRows] : [rowIdx]);
+        const label = selectedRows.size > 1 ? `Visa ${selectedRows.size} markerade på karta` : "Visa på karta";
+        return rows.length > 0
+          ? { label, action: () => { kartaPanel = rows; } }
+          : { label: "Ingen kartdata på dessa rader", action: () => {}, disabled: true };
+      })(),
       { separator: true },
       {
         label: `Exportera markerade (${selectedRows.size})`,

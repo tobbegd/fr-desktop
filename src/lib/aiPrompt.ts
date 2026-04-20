@@ -17,10 +17,15 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
   telefon:        "telefonnummer",
   email:          "e-postadress",
   webbadress:     "webbplatsadress",
+  ar_year:                "senaste bokslutår som finns — IS NOT NULL betyder att nyckeltal finns för bolaget",
   nettoomsattning:        "senaste kända nettoomsättning i kr",
   medelantal_anstallda:   "medelantal anställda",
   arets_resultat:         "årets resultat i kr",
   eget_kapital:           "eget kapital i kr",
+  lat:                    "exakt latitud för adressen — finns inte alltid",
+  lon:                    "exakt longitud för adressen — finns inte alltid",
+  postort_lat:            "latitud för postorten — finns nästan alltid",
+  postort_lon:            "longitud för postorten — finns nästan alltid",
   registreringsdatum:     "datum då bolaget registrerades",
   storleksklass_anst:     "storleksklass baserad på antal anställda",
   storleksklass_oms:      "storleksklass baserad på omsättning",
@@ -99,6 +104,15 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND (ulow(sni_1_n
 
 Fråga: webbyråer i karlstad med organisationsnummer, namn, webb och årsresultat
 SQL: SELECT orgnr, orgnamn, webbadress, arets_resultat FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND (ulow(sni_1_namn) LIKE '%webbyrå%' OR ulow(sni_2_namn) LIKE '%webbyrå%' OR ulow(verksamhet) LIKE '%webbyrå%' OR ulow(orgnamn) LIKE '%webbyrå%') LIMIT 200;
+
+Fråga: bolag i örebro med nyckeltal
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%örebro%' AND ar_year IS NOT NULL LIMIT 200;
+
+Fråga: visa bolag i örebro på karta
+SQL: SELECT orgnr, orgnamn, postort, gatuadress, lat, lon, postort_lat, postort_lon FROM bolag WHERE ulow(postort) LIKE '%örebro%' LIMIT 200;
+
+Fråga: restauranger i stockholm på karta
+SQL: SELECT orgnr, orgnamn, postort, gatuadress, lat, lon, postort_lat, postort_lon FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%') LIMIT 200;
 
 Fråga: it-konsulter i stockholm med historisk omsättning per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%stockholm%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.sni_2_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT 200;
