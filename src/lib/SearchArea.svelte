@@ -11,7 +11,7 @@
   import NyckeltaPanel from "./NyckeltaPanel.svelte";
   import KartaPanel from "./KartaPanel.svelte";
   import { loadPrefs } from "$lib/store";
-  import { buildPrompt, type AiExpl } from "$lib/aiPrompt";
+  import { buildPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
 
   type Props = {
     dbPath: string;
@@ -33,6 +33,20 @@
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
+  let aiInfo = $state("");
+  let aiInfoSql = $state("");
+  let aiMode = $state<"sql" | "chat">("sql");
+  let aiInput = $state<HTMLInputElement | null>(null);
+  const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
+
+  function switchMode(mode: "sql" | "chat") {
+    aiQueryByMode[aiMode] = aiQuery;
+    aiMode = mode;
+    aiQuery = aiQueryByMode[mode];
+    aiInfo = "";
+    aiInfoSql = "";
+    setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
+  }
   let aiAutoExec = $state(true);
   let schema = $state<Record<string, string[]>>({});
   let aiExpl = $state<AiExpl>({});
@@ -337,24 +351,56 @@
     return fixed;
   }
 
+  function extractSqlFromText(text: string): string {
+    // Try ```sql ... ``` block first
+    const fenced = text.match(/```sql\s*([\s\S]*?)```/i);
+    if (fenced) return fenced[1].trim();
+    // Try plain ``` ... ``` block
+    const plain = text.match(/```\s*(SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)[\s\S]*?```/i);
+    if (plain) return plain[0].replace(/^```\w*\s*/i, "").replace(/```$/, "").trim();
+    // Try a line starting with a SQL keyword
+    const lines = text.split("\n");
+    const start = lines.findIndex(l => /^\s*(SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)\b/i.test(l));
+    if (start !== -1) return lines.slice(start).join("\n").trim();
+    return "";
+  }
+
+  function looksLikeSql(text: string): boolean {
+    const t = text.trimStart().toUpperCase();
+    return /^(SELECT|INSERT|UPDATE|DELETE|WITH|PRAGMA|CREATE|DROP|ALTER|EXPLAIN|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK)[\s(]/.test(t);
+  }
+
   async function runAiQuery() {
     if (!aiQuery.trim()) return;
     aiRunning = true;
     aiError = "";
+    aiInfo = "";
+    aiInfoSql = "";
     try {
       const prefs = await loadPrefs();
       const model = prefs.aiModel;
       if (!model) { aiError = "Ingen AI-modell vald. Gå till Inställningar → AI-assistent."; return; }
       const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
-      const schemaText = Object.entries(schema)
-        .map(([t, cols]) => `${t} (${cols.join(", ")})`)
-        .join("\n");
-      const sql = await tauri<string>("query_ollama", {
-        model,
-        prompt: buildPrompt(schema, aiQuery, aiExpl),
-      });
-      sqlQuery = fixSql(sql.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim());
-      if (aiAutoExec) runQuery(true);
+      if (aiMode === "chat") {
+        const raw = await tauri<string>("query_ollama", {
+          model,
+          prompt: buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery),
+        });
+        aiInfo = raw.trim();
+        aiInfoSql = extractSqlFromText(aiInfo);
+      } else {
+        const raw = await tauri<string>("query_ollama", {
+          model,
+          prompt: buildPrompt(schema, aiQuery, aiExpl),
+        });
+        const cleaned = fixSql(raw.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim());
+        if (looksLikeSql(cleaned)) {
+          sqlQuery = cleaned;
+          if (aiAutoExec) runQuery(true);
+        } else {
+          aiInfo = cleaned;
+        }
+      }
     } catch (e) {
       aiError = String(e);
     } finally {
@@ -398,15 +444,27 @@
     <div class="px-3 pt-2 pb-2 border-b border-zinc-800/60">
       <div class="flex items-center gap-2">
         <span class="text-xs text-zinc-600 shrink-0">AI</span>
+        <div class="flex rounded-md overflow-hidden border border-zinc-700 shrink-0 text-xs">
+          <button
+            class="px-2 py-1 transition-colors cursor-pointer {aiMode === 'sql' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            onclick={() => switchMode('sql')}
+          >SQL</button>
+          <button
+            class="px-2 py-1 transition-colors cursor-pointer {aiMode === 'chat' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            onclick={() => switchMode('chat')}
+          >Chat</button>
+        </div>
         <input
           type="text"
+          bind:this={aiInput}
           bind:value={aiQuery}
-          placeholder={ollamaReady ? "Beskriv vad du vill söka..." : "AI ej konfigurerad — klicka för att installera"}
+          placeholder={ollamaReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att installera"}
           class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 text-sm placeholder-zinc-600 focus:outline-none transition-colors
             {ollamaReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
           readonly={!ollamaReady}
           onfocus={() => { if (!ollamaReady) onOpenAiSettings(); }}
           onkeydown={(e) => { if (e.key === "Enter" && ollamaReady) runAiQuery(); }}
+          oninput={(e) => { if (!(e.target as HTMLInputElement).value) aiInfo = ""; }}
         />
         {#if ollamaReady}
           <button
@@ -427,14 +485,36 @@
               Generera
             {/if}
           </button>
+          {#if aiMode === 'sql'}
           <label class="flex items-center gap-1.5 cursor-pointer shrink-0 select-none">
             <input type="checkbox" bind:checked={aiAutoExec} class="accent-zinc-400 cursor-pointer" />
             <span class="text-xs text-zinc-500">auto</span>
           </label>
+          {/if}
         {/if}
       </div>
       {#if aiError}
         <p class="text-xs text-red-400 mt-1">{aiError}</p>
+      {/if}
+      {#if aiInfo}
+        <div class="relative mt-1 mb-3">
+          <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 max-h-48 overflow-y-auto">
+            <p class="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">{aiInfo}</p>
+          </div>
+          <div class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
+            {#if aiInfoSql}
+              <button
+                onclick={() => { sqlQuery = fixSql(aiInfoSql); aiInfo = ""; aiInfoSql = ""; runQuery(true); }}
+                class="px-3 py-0.5 text-xs rounded-full border border-zinc-600 hover:border-emerald-500 bg-zinc-900 text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer select-none"
+              >Kör AI:s förslag</button>
+            {/if}
+            <button
+              onclick={() => { aiInfo = ""; aiInfoSql = ""; }}
+              title="Stäng"
+              class="px-3 py-0.5 text-xs rounded-full border border-zinc-700 hover:border-zinc-500 bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+            >▲</button>
+          </div>
+        </div>
       {/if}
     </div>
 
