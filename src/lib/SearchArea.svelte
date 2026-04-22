@@ -12,13 +12,15 @@
   import KartaPanel from "./KartaPanel.svelte";
   import { loadPrefs } from "$lib/store";
   import { buildPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
+  import type { MenuItem } from "./MenuBar.svelte";
 
   type Props = {
     dbPath: string;
     ollamaReady: boolean;
     onOpenAiSettings: () => void;
+    actionMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, onOpenAiSettings }: Props = $props();
+  let { dbPath, ollamaReady, onOpenAiSettings, actionMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -170,43 +172,6 @@
 
   let sortKeys = $state<{ col: string; dir: "ASC" | "DESC" }[]>([]);
 
-  function parseSelectCols(sql: string): string[] {
-    const match = sql.match(/^\s*SELECT\s+([\s\S]+?)\s+FROM\s+/i);
-    if (!match) return [];
-    const raw = match[1];
-    const cols: string[] = [];
-    let depth = 0, start = 0;
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i] === "(") depth++;
-      else if (raw[i] === ")") depth--;
-      else if (raw[i] === "," && depth === 0) {
-        cols.push(raw.slice(start, i).trim());
-        start = i + 1;
-      }
-    }
-    cols.push(raw.slice(start).trim());
-    return cols;
-  }
-
-  function getColAlias(expr: string): string {
-    const asMatch = expr.match(/\bAS\s+["'`]?(\w+)["'`]?\s*$/i);
-    if (asMatch) return asMatch[1];
-    const simple = expr.match(/["'`]?(\w+)["'`]?\s*$/);
-    return simple ? simple[1] : expr;
-  }
-
-  function handleColRemove(col: string) {
-    const exprs = parseSelectCols(sqlQuery);
-    if (exprs.length <= 1) return;
-    const remaining = exprs.filter(e => getColAlias(e) !== col);
-    if (remaining.length === 0) return;
-    sqlQuery = sqlQuery.replace(
-      /^(\s*SELECT\s+)[\s\S]+?(\s+FROM\s+)/i,
-      `$1${remaining.join(", ")}$2`
-    );
-    sortKeys = sortKeys.filter(k => k.col !== col);
-    runQuery();
-  }
 
   function parseSqlParts(sql: string): { base: string; limit: string } {
     let s = sql.trim();
@@ -433,6 +398,99 @@
     }
   }
 
+  $effect(() => {
+    const items: MenuItem[] = [];
+    const sel = [...selectedRows];
+
+    // Nyckeltal – kräver exakt 1 markerad rad med ar_year
+    if (sel.length === 1 && result) {
+      const meta = getRowMeta(sel[0]);
+      const arYearIdx = result.columns.indexOf("ar_year");
+      const hasAr = arYearIdx !== -1 && result.rows[sel[0]]?.[arYearIdx] != null && result.rows[sel[0]]?.[arYearIdx] !== "";
+      const name = meta ? (meta.orgnamn.length > 30 ? meta.orgnamn.slice(0, 30) + "…" : meta.orgnamn) : "";
+      items.push(hasAr && meta
+        ? { label: `Visa nyckeltal: ${name}`, action: () => { nyckeltaPanel = meta; } }
+        : { label: "Visa nyckeltal", action: () => {}, disabled: true });
+    } else {
+      items.push({ label: "Visa nyckeltal", action: () => {}, disabled: true });
+    }
+
+    // Webbplats – kräver exakt 1 markerad rad med webbadress
+    if (sel.length === 1 && result) {
+      const urlColIdx = result.columns.indexOf("webbadress");
+      const raw = urlColIdx !== -1 ? result.rows[sel[0]]?.[urlColIdx] : null;
+      let url = raw ? String(raw) : null;
+      if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+      items.push(url
+        ? { label: "Öppna webbplats", action: () => openUrl(url!) }
+        : { label: "Öppna webbplats", action: () => {}, disabled: true });
+    } else {
+      items.push({ label: "Öppna webbplats", action: () => {}, disabled: true });
+    }
+
+    // Karta
+    const kartaRowIndices = sel.length > 0 ? sel : (result ? result.rows.map((_, i) => i) : []);
+    const kartaRows = getKartaRows(kartaRowIndices);
+    const kartaLabel = sel.length > 1 ? `Visa ${sel.length} markerade på karta` : "Visa på karta";
+    items.push(kartaRows.length > 0
+      ? { label: kartaLabel, action: () => { kartaPanel = kartaRows; } }
+      : { label: "Visa på karta", action: () => {}, disabled: true });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: `Exportera markerade (${selectedRows.size})`,
+      action: () => { exportPanel = { rows: filteredRows.filter(({ i }) => selectedRows.has(i)).map(({ row }) => row), label: "markerade rader" }; },
+      disabled: selectedRows.size === 0,
+    });
+    items.push({
+      label: `Exportera alla (${filteredRows.length})`,
+      action: () => { exportPanel = { rows: filteredRows.map(({ row }) => row), label: "alla rader" }; },
+      disabled: filteredRows.length === 0,
+    });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: "Kopiera markerade som CSV (med header)",
+      action: () => copySelectedAsCSV(true),
+      disabled: selectedRows.size === 0,
+    });
+    items.push({
+      label: "Kopiera markerade som CSV (utan header)",
+      action: () => copySelectedAsCSV(false),
+      disabled: selectedRows.size === 0,
+    });
+    items.push({
+      label: "Avmarkera alla",
+      action: () => { selectedRows = new Set(); },
+      disabled: selectedRows.size === 0,
+    });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: `Ta bort markerade (${selectedRows.size})`,
+      action: deleteSelected,
+      disabled: selectedRows.size === 0,
+    });
+    items.push({
+      label: "Ta bort omarkerade",
+      action: deleteUnselected,
+      disabled: selectedRows.size === 0,
+    });
+
+    items.push({ separator: true });
+
+    items.push({
+      label: `Återställ alla (${excludedRows.size} dolda)`,
+      action: restoreAll,
+      disabled: excludedRows.size === 0,
+    });
+
+    actionMenuItems = items;
+  });
+
 </script>
 
 <!-- SearchArea fyller återstående höjd i föräldern -->
@@ -560,30 +618,16 @@
           />
         </div>
       {/if}
-      {#if showHistory}
-        <div class="mt-1">
-          <HistoryPanel
-            items={queryHistory}
-            onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
-            onremove={removeFromHistory}
-          />
-        </div>
-      {/if}
-      {#if showSchema}
-        <div class="mt-1 bg-zinc-900 border border-zinc-800 rounded-lg">
-          <SchemaPanel {dbPath} />
-        </div>
-      {/if}
-<div class="flex items-center justify-between">
+      <div class="relative flex items-center justify-between">
         <div class="flex items-center gap-3">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
           <button
-            onclick={() => showSchema = !showSchema}
-            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+            onclick={() => { showSchema = !showSchema; showHistory = false; }}
+            class="text-xs transition-colors cursor-pointer select-none {showSchema ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showSchema ? "Dölj schema" : "Visa schema"}</button>
           <button
-            onclick={() => showHistory = !showHistory}
-            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+            onclick={() => { showHistory = !showHistory; showSchema = false; }}
+            class="text-xs transition-colors cursor-pointer select-none {showHistory ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showHistory ? "Dölj historik" : "Historik"}</button>
         </div>
         <button
@@ -593,6 +637,20 @@
         >
           {running ? "Kör..." : "Kör"}
         </button>
+        {#if showHistory}
+          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+            <HistoryPanel
+              items={queryHistory}
+              onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
+              onremove={removeFromHistory}
+            />
+          </div>
+        {/if}
+        {#if showSchema}
+          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+            <SchemaPanel {dbPath} />
+          </div>
+        {/if}
       </div>
       {#if !dbPath}
         <p class="text-xs text-zinc-600">Ingen databas nedladdad ännu.</p>
@@ -659,13 +717,6 @@
                         class="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-green-500 transition-opacity cursor-pointer leading-none"
                         title="Göm kolumn"
                       >×</button>
-                      {#if !sortKeys.some(k => k.col === col)}
-                      <button
-                        onclick={() => handleColRemove(col)}
-                        class="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-zinc-400 hover:text-red-400 transition-opacity cursor-pointer leading-none"
-                        title="Ta bort kolumn"
-                      >×</button>
-                      {/if}
                     </span>
                     <input
                       type="text"
@@ -797,9 +848,13 @@
         : { label: "Ingen webbadress för denna rad", action: () => {}, disabled: true },
       (() => {
         const meta = getRowMeta(rowIdx);
-        return meta
-          ? { label: `Visa nyckeltal: ${meta.orgnamn.length > 35 ? meta.orgnamn.slice(0, 35) + "…" : meta.orgnamn}`, action: () => { nyckeltaPanel = meta; } }
-          : { label: "Ingen orgnr på denna rad", action: () => {}, disabled: true };
+        if (!meta) return { label: "Ingen orgnr på denna rad", action: () => {}, disabled: true };
+        const arYearIdx = result?.columns.indexOf("ar_year") ?? -1;
+        const hasArData = arYearIdx !== -1 && result?.rows[rowIdx]?.[arYearIdx] !== null && result?.rows[rowIdx]?.[arYearIdx] !== undefined && result?.rows[rowIdx]?.[arYearIdx] !== "";
+        const name = meta.orgnamn.length > 35 ? meta.orgnamn.slice(0, 35) + "…" : meta.orgnamn;
+        return hasArData
+          ? { label: `Visa nyckeltal: ${name}`, action: () => { nyckeltaPanel = meta; } }
+          : { label: `Visa nyckeltal: ${name}`, action: () => {}, disabled: true };
       })(),
       (() => {
         const rows = getKartaRows(selectedRows.size > 0 ? [...selectedRows] : [rowIdx]);
@@ -817,6 +872,7 @@
       {
         label: `Exportera alla (${filteredRows.length})`,
         action: () => exportPanel = { rows: filteredRows.map(({ row }) => row), label: "alla rader" },
+        disabled: filteredRows.length === 0,
       },
       { separator: true },
       {

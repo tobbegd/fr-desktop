@@ -6,7 +6,7 @@
   import Settings from "$lib/Settings.svelte";
   import SearchArea from "$lib/SearchArea.svelte";
   import MenuBar from "$lib/MenuBar.svelte";
-  import type { MenuDef } from "$lib/MenuBar.svelte";
+  import type { MenuDef, MenuItem } from "$lib/MenuBar.svelte";
   import { loadPrefs, savePrefs } from "$lib/store";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
 
@@ -229,7 +229,9 @@
     }
   }
 
-  const appMenus: MenuDef[] = [
+  let actionMenuItems = $state<MenuItem[]>([]);
+
+  const appMenus: MenuDef[] = $derived([
     {
       label: "Företagsdatabasen",
       items: [
@@ -238,7 +240,11 @@
         { label: "Avsluta", shortcut: "Ctrl+Q", action: () => invoke("quit") },
       ],
     },
-  ];
+    {
+      label: "Åtgärder",
+      items: actionMenuItems,
+    },
+  ]);
 
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey && e.key === "q") { e.preventDefault(); invoke("quit"); }
@@ -375,6 +381,7 @@
       {dbPath}
       {ollamaReady}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
+      bind:actionMenuItems
     />
   </div>
 {/if}
