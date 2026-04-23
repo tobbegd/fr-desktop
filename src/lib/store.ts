@@ -19,6 +19,18 @@ export interface Prefs {
   dbExportDate: string;
   offlineLogins: number;
   aiModel: string;
+  geminiApiKey: string;
+  geminiModel: string;
+  aiBackend: string;
+  debugConsole: boolean;
+  debugAi: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpEncryption: string;
+  smtpUsername: string;
+  smtpPassword: string;
+  smtpFromName: string;
+  smtpFromEmail: string;
 }
 
 const defaults: Prefs = {
@@ -33,6 +45,18 @@ const defaults: Prefs = {
   dbExportDate: "",
   offlineLogins: 0,
   aiModel: "",
+  geminiApiKey: "",
+  geminiModel: "gemini-2.0-flash",
+  aiBackend: "",
+  debugConsole: false,
+  debugAi: false,
+  smtpHost: "",
+  smtpPort: 587,
+  smtpEncryption: "starttls",
+  smtpUsername: "",
+  smtpPassword: "",
+  smtpFromName: "",
+  smtpFromEmail: "",
 };
 
 export async function loadPrefs(): Promise<Prefs> {

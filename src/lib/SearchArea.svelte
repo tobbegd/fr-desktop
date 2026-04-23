@@ -11,16 +11,20 @@
   import NyckeltaPanel from "./NyckeltaPanel.svelte";
   import KartaPanel from "./KartaPanel.svelte";
   import { loadPrefs } from "$lib/store";
+  import { debug } from "$lib/debug.svelte";
   import { buildPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
   import type { MenuItem } from "./MenuBar.svelte";
 
   type Props = {
     dbPath: string;
     ollamaReady: boolean;
+    aiBackend: string;
+    geminiApiKey: string;
+    geminiModel: string;
     onOpenAiSettings: () => void;
     actionMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, onOpenAiSettings, actionMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, onOpenAiSettings, actionMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -323,6 +327,9 @@
     // Try plain ``` ... ``` block
     const plain = text.match(/```\s*(SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)[\s\S]*?```/i);
     if (plain) return plain[0].replace(/^```\w*\s*/i, "").replace(/```$/, "").trim();
+    // Try inline `...` containing SQL
+    const inline = text.match(/`((?:SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)[\s\S]*?)`/i);
+    if (inline) return inline[1].trim();
     // Try a line starting with a SQL keyword
     const lines = text.split("\n");
     const start = lines.findIndex(l => /^\s*(SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)\b/i.test(l));
@@ -335,6 +342,23 @@
     return /^(SELECT|INSERT|UPDATE|DELETE|WITH|PRAGMA|CREATE|DROP|ALTER|EXPLAIN|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK)[\s(]/.test(t);
   }
 
+  async function callAi(prompt: string): Promise<string> {
+    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : "Ollama";
+    if (debug.ai) debug.log(`→ ${backendLabel}\n${prompt}`);
+    let result: string;
+    if (aiBackend === "gemini") {
+      if (!geminiApiKey) throw new Error("Ingen Gemini API-nyckel. Gå till Inställningar → AI-assistent.");
+      result = await tauri<string>("query_gemini", { apiKey: geminiApiKey, model: geminiModel, prompt });
+    } else {
+      const prefs = await loadPrefs();
+      const model = prefs.aiModel;
+      if (!model) throw new Error("Ingen Ollama-modell vald. Gå till Inställningar → AI-assistent.");
+      result = await tauri<string>("query_ollama", { model, prompt });
+    }
+    if (debug.ai) debug.log(`← ${backendLabel}\n${result}`);
+    return result;
+  }
+
   async function runAiQuery() {
     if (!aiQuery.trim()) return;
     aiRunning = true;
@@ -342,22 +366,13 @@
     aiInfo = "";
     aiInfoSql = "";
     try {
-      const prefs = await loadPrefs();
-      const model = prefs.aiModel;
-      if (!model) { aiError = "Ingen AI-modell vald. Gå till Inställningar → AI-assistent."; return; }
       const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
       if (aiMode === "chat") {
-        const raw = await tauri<string>("query_ollama", {
-          model,
-          prompt: buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery),
-        });
+        const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery));
         aiInfo = raw.trim();
         aiInfoSql = extractSqlFromText(aiInfo);
       } else {
-        const raw = await tauri<string>("query_ollama", {
-          model,
-          prompt: buildPrompt(schema, aiQuery, aiExpl),
-        });
+        const raw = await callAi(buildPrompt(schema, aiQuery, aiExpl));
         const cleaned = fixSql(raw.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim());
         if (looksLikeSql(cleaned)) {
           sqlQuery = cleaned;

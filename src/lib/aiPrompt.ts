@@ -33,6 +33,7 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
 
 const SEARCH_RULES = `
 Regler:
+- Kolumnnamn innehåller svenska tecken — kopiera dem EXAKT från schemat. Skriv sateslän (inte sateslAN eller sateslAN), sni_1_namn (inte sni_1_name). Hitta kolumnnamnet i listan ovan och använd det ordagrant
 - Använd ulow(kolumn) LIKE '%term%' för ALL textsökning — ulow() hanterar svenska tecken (å,ä,ö). Använd ALDRIG LOWER(), använd ALLTID ulow()
 - Regioner är inte postorter — använd sateskommun (numerisk kommunkod) med BETWEEN: Norrland = sateskommun BETWEEN 2200 AND 2599, Skåne = sateskommun BETWEEN 1200 AND 1299, Västra Götaland = sateskommun BETWEEN 1400 AND 1499, Värmland = sateskommun BETWEEN 1700 AND 1799, Dalarna = sateskommun BETWEEN 2000 AND 2099, Gävleborg = sateskommun BETWEEN 2100 AND 2199
 - sni_1/sni_2/sni_3 är NUMERISKA koder — sök aldrig bransch med dessa; använd sni_1_namn, sni_2_namn med ulow() LIKE
@@ -139,6 +140,9 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(sni_1_
 
 Fråga: bolag i örebro med nyckeltal
 SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%örebro%' AND ar_year IS NOT NULL LIMIT 200;
+
+Fråga: aktiebolag i stockholms län med omsättning över 10 miljoner
+SQL: SELECT orgnamn, sni_1_namn, nettoomsattning, medelantal_anstallda FROM bolag WHERE aktiv = 1 AND orgform = 'AB-ORGFO' AND sateslän = 'Stockholms län' AND nettoomsattning IS NOT NULL AND nettoomsattning > 10000000 ORDER BY nettoomsattning DESC LIMIT 200;
 
 Fråga: visa bolag i örebro på karta
 SQL: SELECT orgnr, orgnamn, postort, gatuadress, lat, lon, postort_lat, postort_lon FROM bolag WHERE ulow(postort) LIKE '%örebro%' LIMIT 200;

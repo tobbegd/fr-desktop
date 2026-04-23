@@ -8,9 +8,12 @@
   import MenuBar from "$lib/MenuBar.svelte";
   import type { MenuDef, MenuItem } from "$lib/MenuBar.svelte";
   import { loadPrefs, savePrefs } from "$lib/store";
+  import DebugConsole from "$lib/DebugConsole.svelte";
+  import MailPage from "$lib/MailPage.svelte";
+  import { debug } from "$lib/debug.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
 
-  type View = "auth" | "main" | "settings";
+  type View = "auth" | "main" | "settings" | "mail";
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
@@ -28,6 +31,11 @@
   let dbSha256 = $state("");
   let dbPath = $state("");
   let dbExportDate = $state("");
+
+  // AI-backend
+  let geminiApiKey = $state("");
+  let geminiModel = $state("gemini-2.0-flash");
+  let aiBackend = $state("");
 
   // Offline-inloggningar (nödläge)
   const OFFLINE_MAX = 2;
@@ -55,6 +63,11 @@
     if (p.dbPath) dbPath = p.dbPath;
     if (p.dbExportDate) dbExportDate = p.dbExportDate;
     offlineLogins = p.offlineLogins ?? 0;
+    if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
+    if (p.geminiModel) geminiModel = p.geminiModel;
+    if (p.aiBackend) aiBackend = p.aiBackend;
+    debug.console = p.debugConsole ?? false;
+    debug.ai = p.debugAi ?? false;
 
     if (p.apiKey) {
       view = "main";
@@ -119,9 +132,21 @@
   // Kör ollama-check varje gång man går till main-vyn
   $effect(() => {
     if (view === "main" && tier) {
-      invoke<boolean>("check_ollama").then(r => { ollamaReady = r; });
+      invoke<boolean>("check_ollama").then(r => {
+        ollamaReady = r;
+        // Auto-välj backend om ingen är vald ännu
+        if (!aiBackend) {
+          if (r) aiBackend = "ollama";
+          else if (geminiApiKey) aiBackend = "gemini";
+        }
+      });
     }
   });
+
+  async function setAiBackend(backend: string) {
+    aiBackend = backend;
+    await savePrefs({ aiBackend: backend });
+  }
 
   function log(msg: string) {
     console.log(`[FDB] ${msg}`);
@@ -235,7 +260,8 @@
     {
       label: "Företagsdatabasen",
       items: [
-        { label: "Inställningar", action: () => { prevView = view; view = "settings"; } },
+        { label: "Inställningar", action: () => { prevView = view; settingsInitialSection = "general"; view = "settings"; } },
+        { label: "Mailutskick", action: () => { prevView = view; view = "mail"; } },
         { separator: true },
         { label: "Avsluta", shortcut: "Ctrl+Q", action: () => invoke("quit") },
       ],
@@ -252,6 +278,8 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} />
+
+{#if debug.console}<DebugConsole />{/if}
 
 {#if view === "auth"}
   <div class="flex items-center justify-center h-screen bg-zinc-950">
@@ -299,6 +327,9 @@
     </div>
   </div>
 
+{:else if view === "mail"}
+  <MailPage onClose={() => { view = prevView; }} />
+
 {:else if view === "settings"}
   <Settings
     {serverUrl}
@@ -317,6 +348,25 @@
     <!-- Topmeny -->
     <header class="h-10 flex items-center justify-between px-2 border-b border-zinc-800 shrink-0">
       <MenuBar menus={appMenus} />
+
+      <!-- AI-backend-toggle -->
+      {#if ollamaReady || geminiApiKey}
+        <div class="flex rounded-md overflow-hidden border border-zinc-700 text-xs">
+          {#if geminiApiKey}
+            <button
+              onclick={() => setAiBackend("gemini")}
+              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'gemini' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            >Gemini</button>
+          {/if}
+          {#if ollamaReady}
+            <button
+              onclick={() => setAiBackend("ollama")}
+              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'ollama' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            >Llama</button>
+          {/if}
+        </div>
+      {/if}
+
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {email}
         {#if isOnline === true}
@@ -380,6 +430,9 @@
     <SearchArea
       {dbPath}
       {ollamaReady}
+      {aiBackend}
+      {geminiApiKey}
+      {geminiModel}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       bind:actionMenuItems
     />

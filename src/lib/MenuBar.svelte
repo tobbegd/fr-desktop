@@ -55,14 +55,14 @@
 
 <svelte:window onmousemove={onMouseMove} onmouseup={onMouseUp} onclick={onWindowClick} />
 
-<div class="flex items-center" data-menubar>
+<div class="flex self-stretch" data-menubar>
   {#each menus as menu, idx}
     {@const isTorn = torn.has(idx)}
-    <div class="relative">
+    <div class="relative self-stretch flex">
       <button
         data-menu-trigger={idx}
         onclick={(e) => { toggle(idx); }}
-        class="px-3 py-1 text-sm rounded transition-colors cursor-pointer
+        class="px-3 text-sm transition-colors cursor-pointer self-stretch
           {openIdx === idx ? 'bg-zinc-700 text-white' : isTorn ? 'text-zinc-600' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'}"
       >{menu.label}</button>
 

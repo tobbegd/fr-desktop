@@ -1,5 +1,8 @@
 <script lang="ts">
   import AiSetup from "$lib/AiSetup.svelte";
+  import SmtpSetup from "$lib/SmtpSetup.svelte";
+  import { debug } from "$lib/debug.svelte";
+  import { savePrefs } from "$lib/store";
 
   type Props = {
     serverUrl: string;
@@ -21,6 +24,8 @@
     { id: "general", label: "Allmänt" },
     { id: "auth", label: "Autentisering" },
     { id: "ai", label: "AI-assistent" },
+    { id: "mail", label: "Mailutskick" },
+    { id: "debug", label: "Debug" },
   ];
 
   function maskedKey(key: string) {
@@ -52,7 +57,7 @@
 
   <!-- Content -->
   <div class="flex-1 flex flex-col">
-    <div class="h-12 flex items-center justify-between px-6 border-b border-zinc-800">
+    <div class="h-12 shrink-0 flex items-center justify-between px-6 border-b border-zinc-800">
       <span class="text-sm font-medium text-zinc-100">
         {nav.find(n => n.id === activeSection)?.label}
       </span>
@@ -64,7 +69,7 @@
       </button>
     </div>
 
-    <div class="flex-1 p-6">
+    <div class="flex-1 overflow-y-auto p-6">
       {#if activeSection === "general"}
         <div class="max-w-md flex flex-col gap-4">
           <div>
@@ -103,6 +108,42 @@
         </div>
       {:else if activeSection === "ai"}
         <AiSetup {dbPath} />
+      {:else if activeSection === "mail"}
+        <SmtpSetup />
+      {:else if activeSection === "debug"}
+        <div class="max-w-md flex flex-col gap-6">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={debug.console}
+              onchange={async (e) => {
+                debug.console = (e.target as HTMLInputElement).checked;
+                await savePrefs({ debugConsole: debug.console });
+              }}
+              class="accent-zinc-400 w-4 h-4 cursor-pointer"
+            />
+            <div>
+              <p class="text-sm text-zinc-200">Aktivera debug-konsoll</p>
+              <p class="text-xs text-zinc-500">Visar ett flytande loggfönster längst ned i appen.</p>
+            </div>
+          </label>
+          <label class="flex items-center gap-3 {debug.console ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}">
+            <input
+              type="checkbox"
+              checked={debug.ai}
+              disabled={!debug.console}
+              onchange={async (e) => {
+                debug.ai = (e.target as HTMLInputElement).checked;
+                await savePrefs({ debugAi: debug.ai });
+              }}
+              class="accent-zinc-400 w-4 h-4 cursor-pointer"
+            />
+            <div>
+              <p class="text-sm text-zinc-200">Se AI-kommunikation</p>
+              <p class="text-xs text-zinc-500">Loggar promptar och svar från AI-backend i debug-konsollen.</p>
+            </div>
+          </label>
+        </div>
       {/if}
     </div>
   </div>

@@ -1,4 +1,9 @@
 use base64::{Engine as _, engine::general_purpose};
+use lettre::{
+    message::header::ContentType, AsyncSmtpTransport, AsyncTransport, Message,
+    Tokio1Executor,
+    transport::smtp::authentication::Credentials,
+};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -572,6 +577,81 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+#[derive(Deserialize)]
+struct GeminiPart { text: String }
+#[derive(Deserialize)]
+struct GeminiContent { parts: Vec<GeminiPart> }
+#[derive(Deserialize)]
+struct GeminiCandidate { content: GeminiContent }
+#[derive(Deserialize)]
+struct GeminiResponse { candidates: Vec<GeminiCandidate> }
+
+#[derive(Deserialize, Serialize)]
+struct GeminiModelInfo {
+    name: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+    #[serde(rename = "supportedGenerationMethods", default)]
+    supported_generation_methods: Vec<String>,
+}
+#[derive(Deserialize)]
+struct GeminiModelsResponse { models: Vec<GeminiModelInfo> }
+
+#[tauri::command]
+async fn list_gemini_models(api_key: String) -> Result<Vec<GeminiModelInfo>, String> {
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+        api_key
+    );
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Gemini-fel: {}", body));
+    }
+
+    let data: GeminiModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let models = data.models.into_iter()
+        .filter(|m| m.supported_generation_methods.iter().any(|s| s == "generateContent"))
+        .map(|mut m| { m.name = m.name.trim_start_matches("models/").to_string(); m })
+        .collect();
+    Ok(models)
+}
+
+#[tauri::command]
+async fn query_gemini(api_key: String, model: String, prompt: String) -> Result<String, String> {
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        model, api_key
+    );
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "contents": [{"parts": [{"text": prompt}]}]
+        }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Gemini-fel {}: {}", status, body));
+    }
+
+    let data: GeminiResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(data.candidates.into_iter().next()
+        .and_then(|c| c.content.parts.into_iter().next())
+        .map(|p| p.text)
+        .unwrap_or_default())
+}
+
 #[tauri::command]
 async fn query_ollama(model: String, prompt: String) -> Result<String, String> {
     let resp = reqwest::Client::new()
@@ -591,6 +671,48 @@ async fn query_ollama(model: String, prompt: String) -> Result<String, String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[tauri::command]
+async fn send_test_email(
+    host: String,
+    port: u16,
+    encryption: String, // "starttls" | "tls" | "none"
+    username: String,
+    password: String,
+    from_name: String,
+    from_email: String,
+    to_email: String,
+) -> Result<(), String> {
+    let email = Message::builder()
+        .from(format!("{} <{}>", from_name, from_email).parse().map_err(|e| format!("Ogiltig avsändaradress: {e}"))?)
+        .to(to_email.parse().map_err(|e| format!("Ogiltig mottagaradress: {e}"))?)
+        .subject("Testmail från Företagsdatabasen")
+        .header(ContentType::TEXT_PLAIN)
+        .body("Det här är ett testmail. SMTP-konfigurationen fungerar.".to_string())
+        .map_err(|e| e.to_string())?;
+
+    let creds = Credentials::new(username, password);
+
+    let mailer: AsyncSmtpTransport<Tokio1Executor> = match encryption.as_str() {
+        "tls" => AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
+            .map_err(|e| e.to_string())?
+            .port(port)
+            .credentials(creds)
+            .build(),
+        "none" => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
+            .port(port)
+            .credentials(creds)
+            .build(),
+        _ => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
+            .map_err(|e| e.to_string())?
+            .port(port)
+            .credentials(creds)
+            .build(),
+    };
+
+    mailer.send(email).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -610,8 +732,11 @@ pub fn run() {
             pull_ollama_model,
             delete_ollama_model,
             query_ollama,
+            query_gemini,
+            list_gemini_models,
             install_ollama,
-            quit
+            quit,
+            send_test_email
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
