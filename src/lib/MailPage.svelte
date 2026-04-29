@@ -1,14 +1,19 @@
 <script lang="ts">
   import SmtpSetup from "$lib/SmtpSetup.svelte";
+  import SackarTab from "$lib/SackarTab.svelte";
+  import TemplatesTab from "$lib/TemplatesTab.svelte";
+  import UtskickTab from "$lib/UtskickTab.svelte";
 
   type Props = { onClose: () => void };
   let { onClose }: Props = $props();
 
-  let activeTab = $state("compose");
+  let activeTab = $state("utskick");
 
   const tabs = [
-    { id: "compose", label: "Utskick" },
-    { id: "smtp",    label: "Inställningar" },
+    { id: "utskick",   label: "Utskick" },
+    { id: "sackar",    label: "Säckar" },
+    { id: "templates", label: "E-postmallar" },
+    { id: "smtp",      label: "Inställningar" },
   ];
 </script>
 
@@ -30,7 +35,7 @@
   </aside>
 
   <!-- Content -->
-  <div class="flex-1 flex flex-col">
+  <div class="flex-1 flex flex-col overflow-hidden">
     <div class="h-10 shrink-0 flex items-center justify-between px-6 border-b border-zinc-800">
       <span class="text-sm font-medium text-zinc-100">
         {tabs.find(t => t.id === activeTab)?.label}
@@ -41,11 +46,15 @@
       >Stäng</button>
     </div>
 
-    <div class="flex-1 overflow-y-auto p-6">
+    <div class="flex-1 overflow-hidden {activeTab === 'smtp' ? 'overflow-y-auto p-6' : ''}">
       {#if activeTab === "smtp"}
         <SmtpSetup />
-      {:else}
-        <div class="text-sm text-zinc-500">Compose-vy kommer här.</div>
+      {:else if activeTab === "sackar"}
+        <SackarTab />
+      {:else if activeTab === "templates"}
+        <TemplatesTab />
+      {:else if activeTab === "utskick"}
+        <UtskickTab />
       {/if}
     </div>
   </div>

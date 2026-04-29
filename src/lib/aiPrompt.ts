@@ -156,6 +156,9 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND webbadress I
 Fråga: restauranger i göteborg med telefon och webbadress
 SQL: SELECT orgnamn, telefon, webbadress FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND telefon IS NOT NULL AND telefon <> '' AND webbadress IS NOT NULL AND webbadress <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%') LIMIT 200;
 
+Fråga: bolag i stockholm med email, bara gmail-adresser, sortera på namn
+SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND LOWER(email) LIKE '%@gmail.com' ORDER BY orgnamn LIMIT 200;
+
 Fråga: it-konsulter i stockholm med historisk omsättning per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%stockholm%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.sni_2_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT 200;
 

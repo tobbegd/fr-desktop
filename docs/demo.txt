@@ -1,1 +1,7 @@
+vilka tabeller har vi
+
 reklambyrå i Örebro med fler än 5 anställda och nyckeltal
+min query är bra men jag vill inte ha web_platform eller mx ns porvider
+
+bolag i örebro som säljer bilar och har en webbsida
+gör om queryn så att jag bara får orgnr, namn, webbsida, lon, lat

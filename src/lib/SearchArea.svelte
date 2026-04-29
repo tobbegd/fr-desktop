@@ -23,8 +23,9 @@
     geminiModel: string;
     onOpenAiSettings: () => void;
     actionMenuItems?: MenuItem[];
+    mailMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, onOpenAiSettings, actionMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -307,6 +308,98 @@
 
   let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
 
+  // Säck-dialog
+  type SackItem = { id: number; namn: string; antal: number };
+  let sackDialog = $state<"ny" | "befintlig" | null>(null);
+  let sackNamn = $state("");
+  let sackarList = $state<SackItem[]>([]);
+  let sackBusy = $state(false);
+  let sackError = $state("");
+  let sackResult = $state<{ tillagda: number; ignorerade: number; duplikater: number } | null>(null);
+
+  function getRowMailData(rowIdx: number): { orgnr: string; orgnamn: string; email: string; reklamsparr: string } | null {
+    if (!result) return null;
+    const orgnrIdx = result.columns.indexOf("orgnr");
+    if (orgnrIdx === -1) return null;
+    const orgnrVal = result.rows[rowIdx]?.[orgnrIdx];
+    if (!orgnrVal) return null;
+    const orgnamnIdx = result.columns.indexOf("orgnamn");
+    const emailIdx = result.columns.indexOf("email");
+    const reklamsparrIdx = result.columns.indexOf("reklamsparr");
+    return {
+      orgnr: String(orgnrVal),
+      orgnamn: orgnamnIdx !== -1 && result.rows[rowIdx]?.[orgnamnIdx] ? String(result.rows[rowIdx][orgnamnIdx]) : String(orgnrVal),
+      email: emailIdx !== -1 && result.rows[rowIdx]?.[emailIdx] ? String(result.rows[rowIdx][emailIdx]) : "",
+      reklamsparr: reklamsparrIdx !== -1 && result.rows[rowIdx]?.[reklamsparrIdx] ? String(result.rows[rowIdx][reklamsparrIdx]) : "",
+    };
+  }
+
+  function getSelectedMailData() {
+    return [...selectedRows].map(i => getRowMailData(i)).filter((d): d is NonNullable<typeof d> => d !== null);
+  }
+
+  async function oppnaSackDialog(typ: "ny" | "befintlig") {
+    sackError = "";
+    sackNamn = "";
+    sackResult = null;
+    if (typ === "befintlig") {
+      sackarList = await tauri<SackItem[]>("list_sackar");
+    }
+    sackDialog = typ;
+  }
+
+  async function skapaSackFranMarkerade() {
+    const namn = sackNamn.trim();
+    if (!namn) return;
+    sackBusy = true;
+    sackError = "";
+    sackResult = null;
+    try {
+      const alla = getSelectedMailData();
+      const medEmail = alla.filter(d => d.email.trim() !== "");
+      // Deduplicera på orgnr (ifall samma bolag förekommer flera gånger i resultatet)
+      const seen = new Set<string>();
+      const unika = medEmail.filter(d => { if (seen.has(d.orgnr)) return false; seen.add(d.orgnr); return true; });
+      const id = await tauri<number>("create_sack", { namn });
+      for (const d of unika) {
+        await tauri("add_bolag_to_sack", { sackId: id, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
+      }
+      sackResult = { tillagda: unika.length, ignorerade: alla.length - medEmail.length, duplikater: medEmail.length - unika.length };
+      sackNamn = "";
+    } catch (e) {
+      sackError = String(e);
+    } finally {
+      sackBusy = false;
+    }
+  }
+
+  async function laggTillISack(sackId: number) {
+    sackBusy = true;
+    sackError = "";
+    sackResult = null;
+    try {
+      const alla = getSelectedMailData();
+      const medEmail = alla.filter(d => d.email.trim() !== "");
+      // Hämta befintliga orgnr i säcken för dubblettcheck
+      const befintliga = await tauri<{ orgnr: string }[]>("list_sack_bolag", { sackId });
+      const befintligaSet = new Set(befintliga.map(b => b.orgnr));
+      const seen = new Set<string>();
+      const nya = medEmail.filter(d => {
+        if (befintligaSet.has(d.orgnr) || seen.has(d.orgnr)) return false;
+        seen.add(d.orgnr);
+        return true;
+      });
+      for (const d of nya) {
+        await tauri("add_bolag_to_sack", { sackId, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
+      }
+      sackResult = { tillagda: nya.length, ignorerade: alla.length - medEmail.length, duplikater: medEmail.length - nya.length };
+    } catch (e) {
+      sackError = String(e);
+    } finally {
+      sackBusy = false;
+    }
+  }
+
   function fixSql(sql: string): string {
     // ILIKE doesn't exist in SQLite
     let fixed = sql.replace(/(\w+)\s+ILIKE\s+('[^']*')/gi, "LOWER($1) LIKE LOWER($2)");
@@ -373,12 +466,17 @@
         aiInfoSql = extractSqlFromText(aiInfo);
       } else {
         const raw = await callAi(buildPrompt(schema, aiQuery, aiExpl));
-        const cleaned = fixSql(raw.trim().replace(/^```sql\n?/i, "").replace(/```$/, "").trim());
+        const rawTrimmed = raw.trim();
+        let candidate = rawTrimmed.replace(/^```sql\n?/i, "").replace(/```$/, "").trim();
+        if (!looksLikeSql(candidate)) {
+          candidate = extractSqlFromText(rawTrimmed) || candidate;
+        }
+        const cleaned = fixSql(candidate);
         if (looksLikeSql(cleaned)) {
           sqlQuery = cleaned;
           if (aiAutoExec) runQuery(true);
         } else {
-          aiInfo = cleaned;
+          aiError = "AI returnerade inte giltig SQL. Försök igen eller byt till chat-läge.";
         }
       }
     } catch (e) {
@@ -504,6 +602,20 @@
     });
 
     actionMenuItems = items;
+
+    const harOrgnr = result !== null && result.columns.includes("orgnr");
+    mailMenuItems = [
+      {
+        label: selectedRows.size > 0 ? `Skapa brevsäck från markerade (${selectedRows.size})` : "Skapa brevsäck från markerade",
+        action: () => oppnaSackDialog("ny"),
+        disabled: !harOrgnr || selectedRows.size === 0,
+      },
+      {
+        label: "Lägg till i brevsäck",
+        action: () => oppnaSackDialog("befintlig"),
+        disabled: !harOrgnr || selectedRows.size === 0,
+      },
+    ];
   });
 
 </script>
@@ -938,5 +1050,76 @@
     label={exportPanel.label}
     onclose={() => exportPanel = null}
   />
+{/if}
+
+{#if sackDialog}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    role="dialog"
+    aria-modal="true"
+    onclick={() => { sackDialog = null; }}
+  >
+    <div
+      class="bg-zinc-900 border border-zinc-700 rounded-xl p-5 w-80 shadow-2xl"
+      onclick={(e) => e.stopPropagation()}
+    >
+      {#if sackResult}
+        <p class="text-sm text-zinc-200 mb-3">
+          {sackResult.tillagda} bolag {sackDialog === "ny" ? "skapade i ny säck" : "tillagda"}.
+        </p>
+        {#if sackResult.ignorerade > 0 || sackResult.duplikater > 0}
+          <div class="flex flex-col gap-1 mb-3">
+            {#if sackResult.ignorerade > 0}
+              <p class="text-xs text-zinc-400">{sackResult.ignorerade} ignorerades — e-post saknas.</p>
+              <p class="text-xs text-zinc-600">Tips: sök med "med email" i AI-söket.</p>
+            {/if}
+            {#if sackResult.duplikater > 0}
+              <p class="text-xs text-zinc-400 {sackResult.ignorerade > 0 ? 'mt-1' : ''}">{sackResult.duplikater} hoppades över — finns redan i säcken.</p>
+            {/if}
+          </div>
+        {/if}
+        <div class="flex justify-end">
+          <button onclick={() => { sackDialog = null; sackResult = null; }} class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded cursor-pointer transition-colors">Stäng</button>
+        </div>
+      {:else if sackDialog === "ny"}
+        <h2 class="text-sm font-medium text-zinc-200 mb-1">Skapa brevsäck</h2>
+        <p class="text-xs text-zinc-500 mb-3">{selectedRows.size} markerade — bolag utan e-post ignoreras.</p>
+        <input
+          bind:value={sackNamn}
+          placeholder="Namn på säcken..."
+          autofocus
+          onkeydown={(e) => e.key === "Enter" && skapaSackFranMarkerade()}
+          class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 mb-3"
+        />
+        {#if sackError}<p class="text-xs text-red-400 mb-2">{sackError}</p>{/if}
+        <div class="flex justify-end gap-2">
+          <button onclick={() => sackDialog = null} class="px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer transition-colors">Avbryt</button>
+          <button
+            onclick={skapaSackFranMarkerade}
+            disabled={sackBusy || !sackNamn.trim()}
+            class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded hover:bg-zinc-200 cursor-pointer disabled:opacity-50 transition-colors"
+          >{sackBusy ? "..." : "Skapa"}</button>
+        </div>
+      {:else}
+        <h2 class="text-sm font-medium text-zinc-200 mb-1">Lägg till i brevsäck</h2>
+        <p class="text-xs text-zinc-500 mb-3">{selectedRows.size} markerade — bolag utan e-post ignoreras.</p>
+        {#if sackarList.length === 0}
+          <p class="text-xs text-zinc-500 mb-3">Inga säckar finns. Skapa en under Utskick → Säckar.</p>
+        {:else}
+          <div class="flex flex-col gap-1 max-h-52 overflow-y-auto mb-3">
+            {#each sackarList as s}
+              <button
+                onclick={() => laggTillISack(s.id)}
+                disabled={sackBusy}
+                class="text-left px-3 py-2 rounded text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+              >{s.namn} <span class="text-zinc-600 text-xs">({s.antal} bolag)</span></button>
+            {/each}
+          </div>
+        {/if}
+        {#if sackError}<p class="text-xs text-red-400 mb-2">{sackError}</p>{/if}
+        <button onclick={() => sackDialog = null} class="px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer transition-colors">Stäng</button>
+      {/if}
+    </div>
+  </div>
 {/if}
 

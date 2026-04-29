@@ -255,13 +255,13 @@
   }
 
   let actionMenuItems = $state<MenuItem[]>([]);
+  let mailMenuItems = $state<MenuItem[]>([]);
 
   const appMenus: MenuDef[] = $derived([
     {
       label: "Företagsdatabasen",
       items: [
         { label: "Inställningar", action: () => { prevView = view; settingsInitialSection = "general"; view = "settings"; } },
-        { label: "Mailutskick", action: () => { prevView = view; view = "mail"; } },
         { separator: true },
         { label: "Avsluta", shortcut: "Ctrl+Q", action: () => invoke("quit") },
       ],
@@ -269,6 +269,14 @@
     {
       label: "Åtgärder",
       items: actionMenuItems,
+    },
+    {
+      label: "Utskick",
+      items: [
+        { label: "Öppna mailutskick", action: () => { prevView = view; view = "mail"; } },
+        { separator: true },
+        ...mailMenuItems,
+      ],
     },
   ]);
 
@@ -435,6 +443,7 @@
       {geminiModel}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       bind:actionMenuItems
+      bind:mailMenuItems
     />
   </div>
 {/if}
