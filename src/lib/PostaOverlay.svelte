@@ -14,6 +14,8 @@
   let info = $state<UtskickInfo | null>(null);
   let hoppaOver = $state(true);
   let skickar = $state(false);
+  let avbryter = $state(false);
+  let avbruten = $state(false);
   let progress = $state<Progress | null>(null);
   let fel = $state("");
   let klart = $state(false);
@@ -21,23 +23,28 @@
   let totalAttSkicka = $derived(info ? (hoppaOver ? info.total - info.reklamsparrade : info.total) : 0);
   let kvarAtSkicka = $derived(info ? Math.max(0, totalAttSkicka - info.skickade) : 0);
 
-  let unlisten: (() => void) | null = null;
+  let unlistens: (() => void)[] = [];
 
   onMount(async () => {
     info = await invoke<UtskickInfo>("get_utskick_info", { utskickId: utskick.id });
-    const ul = await listen<Progress>("utskick-progress", (event) => {
-      if (event.payload.utskick_id === utskick.id) {
-        progress = event.payload;
+    unlistens.push(await listen<Progress>("utskick-progress", (event) => {
+      if (event.payload.utskick_id === utskick.id) progress = event.payload;
+    }));
+    unlistens.push(await listen<number>("utskick-avbruten", (event) => {
+      if (event.payload === utskick.id) {
+        avbruten = true;
+        skickar = false;
+        avbryter = false;
       }
-    });
-    unlisten = ul;
+    }));
   });
 
-  onDestroy(() => { unlisten?.(); });
+  onDestroy(() => { unlistens.forEach(u => u()); });
 
   async function starta() {
     fel = "";
     klart = false;
+    avbruten = false;
     skickar = true;
     progress = null;
     try {
@@ -54,14 +61,20 @@
         fromName: p.smtpFromName ?? "",
         fromEmail: p.smtpFromEmail ?? "",
       });
-      klart = true;
+      if (!avbruten) klart = true;
       info = await invoke<UtskickInfo>("get_utskick_info", { utskickId: utskick.id });
       onDone();
     } catch (e) {
       fel = String(e);
     } finally {
       skickar = false;
+      avbryter = false;
     }
+  }
+
+  async function avbryt() {
+    avbryter = true;
+    await invoke("cancel_utskick", { utskickId: utskick.id });
   }
 </script>
 
@@ -148,6 +161,13 @@
         </div>
       {/if}
 
+      <!-- Avbruten-meddelande -->
+      {#if avbruten}
+        <p class="text-xs text-amber-400 bg-amber-950/40 border border-amber-800/40 rounded px-3 py-2">
+          Avbrutet efter {info?.skickade ?? 0} skickade. Starta igen för att fortsätta från där det slutade.
+        </p>
+      {/if}
+
       <!-- Klart-meddelande -->
       {#if klart}
         <p class="text-xs text-green-400 bg-green-950/40 border border-green-800/40 rounded px-3 py-2">
@@ -165,7 +185,7 @@
     <div class="px-6 pb-5 flex gap-2 justify-end">
       {#if !skickar}
         <button onclick={onClose} class="px-4 py-1.5 text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer">
-          {klart ? "Stäng" : "Avbryt"}
+          {klart || avbruten ? "Stäng" : "Avbryt"}
         </button>
         {#if info && kvarAtSkicka > 0}
           <button
@@ -176,6 +196,11 @@
           </button>
         {/if}
       {:else}
+        <button
+          onclick={avbryt}
+          disabled={avbryter}
+          class="px-4 py-1.5 text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >{avbryter ? "Avbryter..." : "Avbryt"}</button>
         <button disabled class="px-4 py-1.5 text-xs bg-zinc-700 text-zinc-400 rounded cursor-not-allowed">
           Skickar...
         </button>

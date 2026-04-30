@@ -8,6 +8,9 @@
   type Sack = { id: number; namn: string; antal: number };
   type Utskick = { id: number; sack_id: number; sack_namn: string; template_id: number; template_namn: string; skapad: string; status: string; fordrojning_sek: number };
 
+  type Props = { onNavigate: (tab: string, id: number) => void };
+  let { onNavigate }: Props = $props();
+
   let templates = $state<Template[]>([]);
   let sackar = $state<Sack[]>([]);
   let utskick = $state<Utskick[]>([]);
@@ -112,7 +115,7 @@
         {#each templates as t}
           <button
             class="w-full text-left px-4 py-3 border-b border-zinc-800/50 transition-colors cursor-pointer
-              {valdTemplate?.id === t.id ? 'bg-zinc-700 text-white' : 'hover:bg-zinc-900 text-zinc-300'}"
+              {valdTemplate?.id === t.id ? 'bg-zinc-700 text-white' : 'bg-zinc-900/40 hover:bg-zinc-900 text-zinc-300'}"
             onclick={() => valdTemplate = valdTemplate?.id === t.id ? null : t}
           >
             <p class="text-sm">{t.namn}</p>
@@ -168,7 +171,7 @@
         {#each sackar as s}
           <button
             class="w-full text-left px-4 py-3 border-b border-zinc-800/50 transition-colors cursor-pointer
-              {valdSack?.id === s.id ? 'bg-zinc-700 text-white' : 'hover:bg-zinc-900 text-zinc-300'}"
+              {valdSack?.id === s.id ? 'bg-zinc-700 text-white' : 'bg-zinc-900/40 hover:bg-zinc-900 text-zinc-300'}"
             onclick={() => valdSack = valdSack?.id === s.id ? null : s}
           >
             <p class="text-sm">{s.namn}</p>
@@ -185,15 +188,28 @@
   <div class="flex-1 overflow-y-auto">
     <p class="text-xs text-zinc-500 px-4 py-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">Skapade utskick</p>
     {#each utskick as u}
-      <div class="border-b border-zinc-800/50">
+      <div class="border-b border-zinc-800/50 bg-zinc-900/40">
         <div class="flex items-center justify-between px-4 py-3 group">
           <div>
             <div class="flex items-center gap-2">
-              <span class="text-sm text-zinc-200">{u.template_namn}</span>
+              <button
+                class="text-sm text-zinc-200 hover:text-white hover:underline cursor-pointer transition-colors"
+                onclick={() => onNavigate('templates', u.template_id)}
+              >{u.template_namn}</button>
               <span class="text-zinc-500 font-bold">→</span>
-              <span class="text-sm text-zinc-200">{u.sack_namn}</span>
+              <button
+                class="text-sm text-zinc-200 hover:text-white hover:underline cursor-pointer transition-colors"
+                onclick={() => onNavigate('sackar', u.sack_id)}
+              >{u.sack_namn}</button>
             </div>
-            <p class="text-xs text-zinc-600">{u.skapad.slice(0, 16)} · {u.fordrojning_sek}s fördröjning · {u.status}</p>
+            <div class="flex items-center gap-2 mt-0.5">
+              <p class="text-xs text-zinc-600">{u.skapad.slice(0, 16)} · {u.fordrojning_sek}s fördröjning</p>
+              {#if u.status === 'skickat'}
+                <span class="text-xs text-green-400 font-medium">✓ Skickat</span>
+              {:else}
+                <span class="text-xs text-zinc-600">{u.status}</span>
+              {/if}
+            </div>
           </div>
           <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
             <button

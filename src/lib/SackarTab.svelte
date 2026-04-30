@@ -5,6 +5,9 @@
   type Sack = { id: number; namn: string; skapad: string; antal: number };
   type SackBolag = { orgnr: string; orgnamn: string; email: string };
 
+  type Props = { navigateId?: number | null; onNavigated?: () => void };
+  let { navigateId = null, onNavigated }: Props = $props();
+
   let sackar = $state<Sack[]>([]);
   let selected = $state<Sack | null>(null);
   let bolag = $state<SackBolag[]>([]);
@@ -49,7 +52,14 @@
     await ladda();
   }
 
-  onMount(ladda);
+  onMount(async () => {
+    await ladda();
+    if (navigateId != null) {
+      const s = sackar.find(s => s.id === navigateId);
+      if (s) await laddaBolag(s);
+      onNavigated?.();
+    }
+  });
 </script>
 
 <div class="flex h-full gap-0">
@@ -61,7 +71,7 @@
           role="button"
           tabindex="0"
           class="w-full text-left px-4 py-3 border-b border-zinc-800/60 flex items-center justify-between group transition-colors cursor-pointer
-            {selected?.id === s.id ? 'bg-zinc-800' : 'hover:bg-zinc-900'}"
+            {selected?.id === s.id ? 'bg-zinc-800' : 'bg-zinc-900/40 hover:bg-zinc-900'}"
           onclick={() => laddaBolag(s)}
           onkeydown={(e) => e.key === "Enter" && laddaBolag(s)}
         >
@@ -104,7 +114,7 @@
       </div>
       <div class="flex-1 overflow-y-auto">
         {#each bolag as b}
-          <div class="flex items-center justify-between px-5 py-2.5 border-b border-zinc-800/50 group">
+          <div class="flex items-center justify-between px-5 py-2.5 border-b border-zinc-800/50 bg-zinc-900/40 group">
             <div>
               <p class="text-sm text-zinc-200">{b.orgnamn || b.orgnr}</p>
               <p class="text-xs text-zinc-500">{b.email || "–"}</p>

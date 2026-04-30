@@ -8,6 +8,7 @@
   let { onClose }: Props = $props();
 
   let activeTab = $state("utskick");
+  let navigateId = $state<number | null>(null);
 
   const tabs = [
     { id: "utskick",   label: "Utskick" },
@@ -15,6 +16,11 @@
     { id: "templates", label: "E-postmallar" },
     { id: "smtp",      label: "Inställningar" },
   ];
+
+  function handleNavigate(tab: string, id: number) {
+    navigateId = id;
+    activeTab = tab;
+  }
 </script>
 
 <div class="flex h-screen bg-zinc-950 text-white">
@@ -28,7 +34,7 @@
         <button
           class="w-full text-left px-3 py-2 rounded-md text-sm transition-colors cursor-pointer
             {activeTab === tab.id ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}"
-          onclick={() => activeTab = tab.id}
+          onclick={() => { activeTab = tab.id; navigateId = null; }}
         >{tab.label}</button>
       {/each}
     </nav>
@@ -50,11 +56,11 @@
       {#if activeTab === "smtp"}
         <SmtpSetup />
       {:else if activeTab === "sackar"}
-        <SackarTab />
+        <SackarTab navigateId={navigateId} onNavigated={() => navigateId = null} />
       {:else if activeTab === "templates"}
-        <TemplatesTab />
+        <TemplatesTab navigateId={navigateId} onNavigated={() => navigateId = null} />
       {:else if activeTab === "utskick"}
-        <UtskickTab />
+        <UtskickTab onNavigate={handleNavigate} />
       {/if}
     </div>
   </div>

@@ -883,6 +883,8 @@ async fn get_utskick_info(app: AppHandle, utskick_id: i64) -> Result<UtskickInfo
     }).await.map_err(|e| e.to_string())?
 }
 
+struct CancelSet(std::sync::Mutex<std::collections::HashSet<i64>>);
+
 #[derive(Clone, Serialize)]
 struct UtskickProgress {
     utskick_id: i64,
@@ -892,8 +894,18 @@ struct UtskickProgress {
 }
 
 #[tauri::command]
+async fn cancel_utskick(
+    cancel_set: tauri::State<'_, CancelSet>,
+    utskick_id: i64,
+) -> Result<(), String> {
+    cancel_set.0.lock().unwrap().insert(utskick_id);
+    Ok(())
+}
+
+#[tauri::command]
 async fn post_utskick(
     app: AppHandle,
+    cancel_set: tauri::State<'_, CancelSet>,
     utskick_id: i64,
     hoppa_over_reklamsparr: bool,
     host: String,
@@ -952,6 +964,11 @@ async fn post_utskick(
     };
 
     for (i, (orgnr, orgnamn, email, _)) in bolag.iter().enumerate() {
+        if cancel_set.0.lock().unwrap().remove(&utskick_id) {
+            app.emit("utskick-avbruten", utskick_id).ok();
+            return Ok(i);
+        }
+
         let fill = |s: &str| s
             .replace("{{orgnamn}}", orgnamn)
             .replace("{{orgnr}}", orgnr)
@@ -1190,6 +1207,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .manage(CancelSet(std::sync::Mutex::new(std::collections::HashSet::new())))
         .invoke_handler(tauri::generate_handler![
             verify_license,
             check_manifest,
@@ -1225,6 +1243,7 @@ pub fn run() {
             create_utskick,
             delete_utskick,
             get_utskick_info,
+            cancel_utskick,
             post_utskick
         ])
         .run(tauri::generate_context!())

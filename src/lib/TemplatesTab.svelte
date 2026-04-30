@@ -4,6 +4,9 @@
 
   type Template = { id: number; namn: string; amne: string; brodtext: string; skapad: string };
 
+  type Props = { navigateId?: number | null; onNavigated?: () => void };
+  let { navigateId = null, onNavigated }: Props = $props();
+
   let templates = $state<Template[]>([]);
   let selected = $state<Template | null>(null);
   let sparar = $state(false);
@@ -64,7 +67,14 @@
     selected.brodtext += ph;
   }
 
-  onMount(ladda);
+  onMount(async () => {
+    await ladda();
+    if (navigateId != null) {
+      const t = templates.find(t => t.id === navigateId);
+      if (t) valj(t);
+      onNavigated?.();
+    }
+  });
 </script>
 
 <div class="flex h-full gap-0">
@@ -82,7 +92,7 @@
           role="button"
           tabindex="0"
           class="w-full text-left px-4 py-3 border-b border-zinc-800/60 flex items-center justify-between group transition-colors cursor-pointer
-            {selected?.id === t.id ? 'bg-zinc-800' : 'hover:bg-zinc-900'}"
+            {selected?.id === t.id ? 'bg-zinc-800' : 'bg-zinc-900/40 hover:bg-zinc-900'}"
           onclick={() => valj(t)}
           onkeydown={(e) => e.key === "Enter" && valj(t)}
         >
