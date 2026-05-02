@@ -25,8 +25,14 @@
     marker: L.Marker;
   };
 
-  type Props = { bolag: Bolag[]; onclose: () => void };
-  let { bolag, onclose }: Props = $props();
+  type Props = {
+    bolag: Bolag[];
+    onclose: () => void;
+    searchMode?: boolean;
+    dbPath?: string;
+    onsearchresult?: (orgnrs: string[]) => void;
+  };
+  let { bolag, onclose, searchMode = false, dbPath, onsearchresult }: Props = $props();
 
   let mapEl: HTMLDivElement;
   let map: L.Map | null = null;
@@ -37,7 +43,15 @@
   let startIdx = $state<number | null>(null);
   let routeLoading = $state(false);
   let routeError = $state("");
-  let routeOrder = $state<number[] | null>(null); // waypoint indices in travel order
+  let routeOrder = $state<number[] | null>(null);
+
+  let drawMode = $state(false);
+  let drawPoints = $state<L.LatLng[]>([]);
+  let drawPolyLayer: L.Polygon | null = null;
+  let drawDotLayers: L.CircleMarker[] = [];
+  let searchLoading = $state(false);
+  let searchError = $state("");
+  let searchTruncated = $state(false);
 
   // --- Icons ---
 
@@ -150,6 +164,116 @@
     }
   }
 
+  // --- Draw / polygon search ---
+
+  function clearDrawLayers() {
+    drawDotLayers.forEach(m => map?.removeLayer(m));
+    drawDotLayers = [];
+    if (drawPolyLayer) { map?.removeLayer(drawPolyLayer); drawPolyLayer = null; }
+  }
+
+  function updateDrawLayers() {
+    clearDrawLayers();
+    if (drawPoints.length === 0) return;
+    if (drawPoints.length >= 2) {
+      drawPolyLayer = L.polygon(drawPoints, {
+        color: "#f97316", fillColor: "#f97316", fillOpacity: 0.08,
+        weight: 2, dashArray: "6 4",
+        interactive: false,
+      }).addTo(map!);
+    }
+    drawPoints.forEach((pt) => {
+      const m = L.circleMarker(pt, {
+        radius: 5, color: "#f97316", fillColor: "#fff",
+        fillOpacity: 1, weight: 2, interactive: false,
+      }).addTo(map!);
+      drawDotLayers.push(m);
+    });
+  }
+
+  function startDraw() {
+    if (routeMode) return;
+    drawMode = true;
+    drawPoints = [];
+    clearDrawLayers();
+    searchError = "";
+    searchTruncated = false;
+    map!.getContainer().style.cursor = "crosshair";
+  }
+
+  function finishDraw() {
+    if (drawPoints.length < 3) return;
+    drawMode = false;
+    map!.getContainer().style.cursor = "";
+    updateDrawLayers();
+  }
+
+  function cancelDraw() {
+    drawMode = false;
+    drawPoints = [];
+    clearDrawLayers();
+    searchError = "";
+    searchTruncated = false;
+    map!.getContainer().style.cursor = "";
+  }
+
+  function pointInPolygon(lat: number, lon: number, poly: L.LatLng[]): boolean {
+    let inside = false;
+    const n = poly.length;
+    let j = n - 1;
+    for (let i = 0; i < n; i++) {
+      const xi = poly[i].lng, yi = poly[i].lat;
+      const xj = poly[j].lng, yj = poly[j].lat;
+      if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    return inside;
+  }
+
+  async function searchWithinPolygon() {
+    if (drawPoints.length < 3 || !dbPath) return;
+    searchLoading = true;
+    searchError = "";
+    searchTruncated = false;
+    if (drawMode) finishDraw();
+
+    const lats = drawPoints.map(p => p.lat);
+    const lons = drawPoints.map(p => p.lng);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+
+    const sql = `SELECT orgnr, lat, lon, postort_lat, postort_lon FROM bolag WHERE (lat BETWEEN ${minLat} AND ${maxLat} AND lon BETWEEN ${minLon} AND ${maxLon}) OR (postort_lat BETWEEN ${minLat} AND ${maxLat} AND postort_lon BETWEEN ${minLon} AND ${maxLon})`;
+
+    try {
+      const res = await invoke<{ columns: string[]; rows: unknown[][]; truncated: boolean }>("query_db", { dbPath, sql });
+      searchTruncated = res.truncated;
+      const ci = (col: string) => res.columns.indexOf(col);
+      const orgnrs = res.rows
+        .filter(row => {
+          const lat = row[ci("lat")] as number | null;
+          const lon = row[ci("lon")] as number | null;
+          const plat = row[ci("postort_lat")] as number | null;
+          const plon = row[ci("postort_lon")] as number | null;
+          if (lat !== null && lon !== null) return pointInPolygon(lat, lon, drawPoints);
+          if (plat !== null && plon !== null) return pointInPolygon(plat, plon, drawPoints);
+          return false;
+        })
+        .map(row => String(row[ci("orgnr")]));
+
+      if (orgnrs.length === 0) {
+        searchError = "Inga bolag hittades inom markeringen.";
+        return;
+      }
+      onsearchresult?.(orgnrs);
+    } catch (e) {
+      searchError = String(e);
+    } finally {
+      searchLoading = false;
+    }
+  }
+
   // --- Mount ---
 
   onMount(() => {
@@ -158,6 +282,20 @@
       attribution: "© OpenStreetMap",
       maxZoom: 19,
     }).addTo(map);
+
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      if (!drawMode) return;
+      drawPoints = [...drawPoints, e.latlng];
+      updateDrawLayers();
+    });
+
+    map.on("dblclick", (e: L.LeafletMouseEvent) => {
+      if (!drawMode) return;
+      L.DomEvent.stopPropagation(e);
+      // dblclick fires two click events first — remove the extra point
+      drawPoints = drawPoints.slice(0, -1);
+      if (drawPoints.length >= 3) finishDraw();
+    });
 
     const postortGroups = new Map<string, Bolag[]>();
     const bounds: [number, number][] = [];
@@ -285,14 +423,51 @@
 
 <div class="fixed inset-4 z-50 flex flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl overflow-hidden">
   <div class="flex items-center gap-4 px-5 py-3 border-b border-zinc-800 shrink-0">
-    <span class="text-base font-semibold text-zinc-100">{bolag.length} bolag på karta</span>
-    <div class="flex items-center gap-4 text-xs text-zinc-500">
-      <span><span class="inline-block w-3 h-3 rounded-full bg-blue-400 mr-1"></span>Exakt adress</span>
-      <span><span class="inline-block w-3 h-3 rounded-full bg-orange-400 mr-1"></span>Postortspin</span>
-    </div>
+    {#if searchMode}
+      <span class="text-base font-semibold text-zinc-100">
+        {drawMode
+          ? (drawPoints.length === 0
+              ? "Klicka på kartan för att rita"
+              : `Ritar — ${drawPoints.length} punkt${drawPoints.length !== 1 ? "er" : ""}`)
+          : drawPoints.length >= 3
+            ? `Markering klar — ${drawPoints.length} punkter`
+            : "Rita en markering på kartan"}
+      </span>
+    {:else}
+      <span class="text-base font-semibold text-zinc-100">{bolag.length} bolag på karta</span>
+      <div class="flex items-center gap-4 text-xs text-zinc-500">
+        <span><span class="inline-block w-3 h-3 rounded-full bg-blue-400 mr-1"></span>Exakt adress</span>
+        <span><span class="inline-block w-3 h-3 rounded-full bg-orange-400 mr-1"></span>Postortspin</span>
+      </div>
+    {/if}
     <div class="flex-1"></div>
 
-    {#if routeMode}
+    {#if drawMode}
+      {#if drawPoints.length >= 3}
+        <span class="text-xs text-zinc-400">Fortsätt klicka för fler punkter · dubbelklicka för att avsluta</span>
+        <button
+          class="px-3 py-1.5 text-xs rounded-md bg-orange-700 hover:bg-orange-600 text-white font-medium transition-colors cursor-pointer disabled:opacity-40"
+          disabled={searchLoading}
+          onclick={searchWithinPolygon}
+        >{searchLoading ? "Söker..." : "Hitta bolag inom markering"}</button>
+      {:else}
+        <span class="text-xs text-zinc-500">Rita minst 3 punkter</span>
+      {/if}
+      <button
+        class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+        onclick={cancelDraw}
+      >Avbryt</button>
+    {:else if drawPoints.length >= 3}
+      <button
+        class="px-3 py-1.5 text-xs rounded-md bg-orange-700 hover:bg-orange-600 text-white font-medium transition-colors cursor-pointer disabled:opacity-40"
+        disabled={searchLoading}
+        onclick={searchWithinPolygon}
+      >{searchLoading ? "Söker..." : "Hitta bolag inom markering"}</button>
+      <button
+        class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+        onclick={cancelDraw}
+      >Rensa markering</button>
+    {:else if routeMode}
       <span class="text-xs text-zinc-400">
         {#if startIdx === null}Klicka på en pin för att sätta startpunkt{:else}Startpunkt vald — {waypoints.length} stopp{/if}
       </span>
@@ -309,20 +484,34 @@
     {:else}
       <button
         class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
-        onclick={toggleRouteMode}
-      >Planera rutt</button>
+        onclick={startDraw}
+      >Rita markering</button>
+      {#if !searchMode}
+        <button
+          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+          onclick={toggleRouteMode}
+        >Planera rutt</button>
+      {/if}
     {/if}
 
-    <button
-      class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer disabled:opacity-40"
-      disabled={pdfLoading}
-      onclick={exportPdf}
-    >{pdfLoading ? "Exporterar..." : "Exportera PDF"}</button>
+    {#if !searchMode}
+      <button
+        class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer disabled:opacity-40"
+        disabled={pdfLoading}
+        onclick={exportPdf}
+      >{pdfLoading ? "Exporterar..." : "Exportera PDF"}</button>
+    {/if}
     <button class="text-zinc-400 hover:text-zinc-100 text-xl leading-none px-1" onclick={onclose}>✕</button>
   </div>
 
   {#if routeError}
     <div class="shrink-0 px-5 py-2 text-xs text-red-400 border-b border-zinc-800">{routeError}</div>
+  {/if}
+  {#if searchError}
+    <div class="shrink-0 px-5 py-2 text-xs text-red-400 border-b border-zinc-800">{searchError}</div>
+  {/if}
+  {#if searchTruncated}
+    <div class="shrink-0 px-5 py-2 text-xs text-yellow-600 border-b border-zinc-800">Varning: området är för stort — resultatet är avkortat. Rita en mindre markering.</div>
   {/if}
 
   <div class="flex-1 min-h-0" bind:this={mapEl}></div>

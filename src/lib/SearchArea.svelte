@@ -117,6 +117,15 @@
   let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string; url?: string } | null>(null);
   let nyckeltaPanel = $state<{ orgnr: string; orgnamn: string } | null>(null);
   let kartaPanel = $state<{ orgnr: string; orgnamn: string; lat: number | null; lon: number | null; postort_lat: number | null; postort_lon: number | null; postort: string | null; gatuadress: string | null }[] | null>(null);
+  let kartaSearch = $state(false);
+
+  function onKartaSearchResult(orgnrs: string[]) {
+    kartaSearch = false;
+    if (orgnrs.length === 0) return;
+    const inList = orgnrs.map(o => `'${o.replace(/'/g, "''")}'`).join(", ");
+    sqlQuery = `SELECT orgnr, orgnamn, gatuadress, postnummer, postort, lat, lon\nFROM bolag\nWHERE orgnr IN (${inList})`;
+    runQuery(true);
+  }
 
   function getKartaRows(rowIndices: number[]) {
     if (!result) return [];
@@ -756,6 +765,11 @@
             onclick={() => { showHistory = !showHistory; showSchema = false; }}
             class="text-xs transition-colors cursor-pointer select-none {showHistory ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showHistory ? "Dölj historik" : "Historik"}</button>
+          <button
+            onclick={() => { kartaSearch = true; }}
+            disabled={!dbPath}
+            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none disabled:opacity-30"
+          >Kartasökning</button>
         </div>
         <button
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
@@ -949,6 +963,16 @@
 
 {#if kartaPanel}
   <KartaPanel bolag={kartaPanel} onclose={() => kartaPanel = null} />
+{/if}
+
+{#if kartaSearch}
+  <KartaPanel
+    bolag={[]}
+    searchMode={true}
+    {dbPath}
+    onsearchresult={onKartaSearchResult}
+    onclose={() => kartaSearch = false}
+  />
 {/if}
 
 {#if nyckeltaPanel}
