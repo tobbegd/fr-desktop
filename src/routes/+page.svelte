@@ -35,6 +35,8 @@
   // AI-backend
   let geminiApiKey = $state("");
   let geminiModel = $state("gemini-2.0-flash");
+  let groqApiKey = $state("");
+  let groqModel = $state("meta-llama/llama-3.3-70b-instruct:free");
   let aiBackend = $state("");
 
   // Offline-inloggningar (nödläge)
@@ -65,6 +67,8 @@
     offlineLogins = p.offlineLogins ?? 0;
     if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
     if (p.geminiModel) geminiModel = p.geminiModel;
+    if (p.groqApiKey) groqApiKey = p.groqApiKey;
+    if (p.groqModel) groqModel = p.groqModel;
     if (p.aiBackend) aiBackend = p.aiBackend;
     debug.console = p.debugConsole ?? false;
     debug.ai = p.debugAi ?? false;
@@ -137,6 +141,7 @@
         // Auto-välj backend om ingen är vald ännu
         if (!aiBackend) {
           if (r) aiBackend = "ollama";
+          else if (groqApiKey) aiBackend = "groq";
           else if (geminiApiKey) aiBackend = "gemini";
         }
       });
@@ -256,6 +261,7 @@
 
   let actionMenuItems = $state<MenuItem[]>([]);
   let mailMenuItems = $state<MenuItem[]>([]);
+  let kartaMenuItems = $state<MenuItem[]>([]);
 
   const appMenus: MenuDef[] = $derived([
     {
@@ -269,6 +275,10 @@
     {
       label: "Åtgärder",
       items: actionMenuItems,
+    },
+    {
+      label: "Karta",
+      items: kartaMenuItems,
     },
     {
       label: "Utskick",
@@ -348,7 +358,15 @@
     {dbPath}
     initialSection={settingsInitialSection}
     onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
-    onClose={() => { view = "main"; settingsInitialSection = "general"; }}
+    onClose={async () => {
+      view = "main";
+      settingsInitialSection = "general";
+      const p = await loadPrefs();
+      if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
+      if (p.geminiModel) geminiModel = p.geminiModel;
+      if (p.groqApiKey) groqApiKey = p.groqApiKey;
+      if (p.groqModel) groqModel = p.groqModel;
+    }}
   />
 
 {:else}
@@ -358,8 +376,14 @@
       <MenuBar menus={appMenus} />
 
       <!-- AI-backend-toggle -->
-      {#if ollamaReady || geminiApiKey}
+      {#if ollamaReady || geminiApiKey || groqApiKey}
         <div class="flex rounded-md overflow-hidden border border-zinc-700 text-xs">
+          {#if groqApiKey}
+            <button
+              onclick={() => setAiBackend("groq")}
+              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'groq' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            >OpenRouter</button>
+          {/if}
           {#if geminiApiKey}
             <button
               onclick={() => setAiBackend("gemini")}
@@ -441,9 +465,12 @@
       {aiBackend}
       {geminiApiKey}
       {geminiModel}
+      {groqApiKey}
+      {groqModel}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       bind:actionMenuItems
       bind:mailMenuItems
+      bind:kartaMenuItems
     />
   </div>
 {/if}

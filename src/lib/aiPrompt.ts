@@ -14,7 +14,7 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
   sni_1:          "primär SNI-branschkod (numerisk) — använd INTE för textsökning, använd sni_1_namn",
   sni_2:          "sekundär SNI-branschkod (numerisk) — använd INTE för textsökning, använd sni_2_namn",
   verksamhet:     "fritext om vad företaget gör — använd LIKE för sökning",
-  telefon:        "telefonnummer",
+  telefon:        "bolagets telefon",
   email:          "e-postadress",
   webbadress:     "webbplatsadress",
   ar_year:                "senaste bokslutår som finns — IS NOT NULL betyder att nyckeltal finns för bolaget",
@@ -88,6 +88,12 @@ ${schemaText}
 
 Kolumnbeskrivningar:
 ${columnGuide}
+
+Viktiga fakta om databasen:
+- Kolumnnamnen är på svenska — referera alltid till dem EXAKT som de stavas i schemat ovan (t.ex. "telefon", INTE "phone" eller "telefonnummer")
+- Kolumnerna telefon, email, webbadress, nettoomsattning, arets_resultat, eget_kapital finns DIREKT i bolag-tabellen — ingen JOIN behövs
+- JOIN med arsredovisningar behövs BARA om användaren vill ha historik för flera år
+- Sök text med ulow(kolumn) LIKE — aldrig LOWER()
 ${sqlContext}
 Fråga: ${question}`;
 }

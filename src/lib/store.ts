@@ -21,6 +21,8 @@ export interface Prefs {
   aiModel: string;
   geminiApiKey: string;
   geminiModel: string;
+  groqApiKey: string;
+  groqModel: string;
   aiBackend: string;
   debugConsole: boolean;
   debugAi: boolean;
@@ -47,6 +49,8 @@ const defaults: Prefs = {
   aiModel: "",
   geminiApiKey: "",
   geminiModel: "gemini-2.0-flash",
+  groqApiKey: "",
+  groqModel: "meta-llama/llama-3.3-70b-instruct:free",
   aiBackend: "",
   debugConsole: false,
   debugAi: false,

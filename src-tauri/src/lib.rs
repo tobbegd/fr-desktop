@@ -1103,6 +1103,59 @@ async fn query_gemini(api_key: String, model: String, prompt: String) -> Result<
 }
 
 #[tauri::command]
+async fn list_openrouter_models(api_key: String) -> Result<Vec<serde_json::Value>, String> {
+    let resp = reqwest::Client::new()
+        .get("https://openrouter.ai/api/v1/models")
+        .bearer_auth(api_key.trim())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("OpenRouter-fel {}", resp.status()));
+    }
+    let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let models = data["data"].as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| {
+            let id = m["id"].as_str().unwrap_or("");
+            let price = m["pricing"]["prompt"].as_str().unwrap_or("1");
+            id.ends_with(":free") || price == "0" || price == "0.0" || price == "0.00"
+        })
+        .collect();
+    Ok(models)
+}
+
+#[tauri::command]
+async fn query_groq(api_key: String, model: String, prompt: String) -> Result<String, String> {
+    let key = api_key.trim().to_string();
+    let resp = reqwest::Client::new()
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .bearer_auth(&key)
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("OpenRouter-fel {}: {}", status, body));
+    }
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(data["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
+}
+
+#[tauri::command]
 async fn query_ollama(model: String, prompt: String) -> Result<String, String> {
     let resp = reqwest::Client::new()
         .post(format!("{}/api/generate", OLLAMA_BASE))
@@ -1224,6 +1277,8 @@ pub fn run() {
             delete_ollama_model,
             query_ollama,
             query_gemini,
+            query_groq,
+            list_openrouter_models,
             list_gemini_models,
             install_ollama,
             quit,

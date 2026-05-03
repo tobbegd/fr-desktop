@@ -104,6 +104,8 @@
     if (p.aiModel) activeModel = p.aiModel;
     if (p.geminiApiKey) { geminiApiKey = p.geminiApiKey; loadGeminiModels(); }
     if (p.geminiModel) geminiModel = p.geminiModel;
+    if (p.groqApiKey) { groqApiKey = p.groqApiKey; loadOpenRouterModels(); }
+    if (p.groqModel) groqModel = p.groqModel;
   });
 
   async function saveGeminiSettings() {
@@ -118,6 +120,36 @@
   let geminiTestResult = $state("");
   let geminiTesting = $state(false);
   let geminiTestError = $state("");
+
+  // Groq
+  let groqApiKey = $state("");
+  let groqModel = $state("");
+  let groqSaving = $state(false);
+  let groqSaved = $state(false);
+  let groqTesting = $state(false);
+  let groqTestResult = $state("");
+  let groqTestError = $state("");
+  type OpenRouterModel = { id: string; name: string };
+  let openRouterModels = $state<OpenRouterModel[]>([]);
+  let openRouterModelsLoading = $state(false);
+  let openRouterModelsError = $state("");
+
+  async function loadOpenRouterModels() {
+    if (!groqApiKey) return;
+    openRouterModelsLoading = true;
+    openRouterModelsError = "";
+    try {
+      const raw = await invoke<{ id: string; name: string }[]>("list_openrouter_models", { apiKey: groqApiKey });
+      openRouterModels = raw.map(m => ({ id: m.id, name: m.name ?? m.id }));
+      if (openRouterModels.length && !openRouterModels.some(m => m.id === groqModel)) {
+        groqModel = openRouterModels[0].id;
+      }
+    } catch (e) {
+      openRouterModelsError = String(e);
+    } finally {
+      openRouterModelsLoading = false;
+    }
+  }
 
   async function runGeminiTest() {
     geminiTesting = true;
@@ -134,6 +166,34 @@
       geminiTestError = String(e);
     } finally {
       geminiTesting = false;
+    }
+  }
+
+  async function saveGroqSettings() {
+    groqSaving = true;
+    groqSaved = false;
+    groqApiKey = groqApiKey.trim();
+    await savePrefs({ groqApiKey, groqModel });
+    groqSaving = false;
+    groqSaved = true;
+    setTimeout(() => { groqSaved = false; }, 2000);
+  }
+
+  async function runGroqTest() {
+    groqTesting = true;
+    groqTestResult = "";
+    groqTestError = "";
+    try {
+      const schema = await invoke<Record<string, string[]>>("get_schema", { dbPath });
+      groqTestResult = await invoke<string>("query_groq", {
+        apiKey: groqApiKey,
+        model: groqModel,
+        prompt: buildPrompt(schema, testPrompt),
+      });
+    } catch (e) {
+      groqTestError = String(e);
+    } finally {
+      groqTesting = false;
     }
   }
 
@@ -255,7 +315,7 @@
 
   <!-- Flikar -->
   <div class="flex border-b border-zinc-800 mb-6">
-    {#each [{ id: "gemini", label: "Gemini (moln, rekommenderas)" }, { id: "llama", label: "Llama (lokalt)" }] as tab}
+    {#each [{ id: "groq", label: "OpenRouter (moln, gratis)" }, { id: "gemini", label: "Gemini (moln)" }, { id: "llama", label: "Llama (lokalt)" }] as tab}
       <button
         onclick={() => activeTab = tab.id}
         class="px-4 py-2 text-sm transition-colors cursor-pointer border-b-2 -mb-px
@@ -463,6 +523,84 @@ sudo rm -rf /usr/share/ollama</pre>
         {/if}
       {/if}
     </div>
+
+  {:else if activeTab === "groq"}
+    <p class="text-sm text-zinc-400 mb-6 leading-relaxed">
+      OpenRouter ger tillgång till många AI-modeller i <strong class="text-zinc-200">molnet</strong> — gratis tier med generösa gränser.
+      Skaffa gratis API-nyckel på
+      <button
+        onclick={() => openUrl("https://openrouter.ai/keys")}
+        class="text-zinc-200 underline hover:text-white cursor-pointer transition-colors"
+      >openrouter.ai</button>.
+    </p>
+
+    <div class="flex flex-col gap-4 max-w-md">
+      <div>
+        <p class="text-xs text-zinc-500 mb-1">API-nyckel</p>
+        <input
+          type="password"
+          bind:value={groqApiKey}
+          placeholder="sk-or-..."
+          class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+        />
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <p class="text-xs text-zinc-500">Modell</p>
+          <button
+            onclick={loadOpenRouterModels}
+            disabled={!groqApiKey || openRouterModelsLoading}
+            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer disabled:opacity-40"
+          >{openRouterModelsLoading ? "Hämtar..." : "Hämta modeller"}</button>
+        </div>
+        {#if openRouterModelsError}
+          <p class="text-xs text-red-400 mb-1">{openRouterModelsError}</p>
+        {/if}
+        {#if openRouterModels.length > 0}
+          <select
+            bind:value={groqModel}
+            class="w-full appearance-none bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
+          >
+            {#each openRouterModels as m}
+              <option value={m.id}>{m.name} ({m.id})</option>
+            {/each}
+          </select>
+        {:else}
+          <input
+            bind:value={groqModel}
+            placeholder="t.ex. meta-llama/llama-3.3-70b-instruct:free"
+            class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+          />
+        {/if}
+      </div>
+      <button
+        onclick={saveGroqSettings} disabled={groqSaving}
+        class="w-fit px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
+      >{groqSaving ? "Sparar..." : groqSaved ? "Sparat ✓" : "Spara"}</button>
+    </div>
+
+    {#if groqApiKey}
+      <div class="mt-6">
+        <h2 class="text-sm font-medium text-zinc-200 mb-3">Testkörning</h2>
+        <div class="flex flex-col gap-3">
+          <textarea
+            bind:value={testPrompt}
+            rows="2"
+            class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 resize-none"
+          ></textarea>
+          <button
+            class="w-fit px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
+            onclick={runGroqTest} disabled={groqTesting}
+          >{groqTesting ? "Genererar..." : "Generera SQL"}</button>
+          {#if groqTestResult}
+            <pre class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-green-300 font-mono whitespace-pre-wrap">{groqTestResult}</pre>
+          {/if}
+          {#if groqTestError}
+            <p class="text-xs text-red-400">{groqTestError}</p>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
   {:else if activeTab === "gemini"}
     <p class="text-sm text-zinc-400 mb-6 leading-relaxed">

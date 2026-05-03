@@ -21,11 +21,14 @@
     aiBackend: string;
     geminiApiKey: string;
     geminiModel: string;
+    groqApiKey: string;
+    groqModel: string;
     onOpenAiSettings: () => void;
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
+    kartaMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, groqApiKey, groqModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -37,6 +40,7 @@
   let sqlQuery = $state("");
 
   // AI
+  const aiReady = $derived(ollamaReady || !!geminiApiKey || !!groqApiKey);
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
@@ -444,13 +448,21 @@
     return /^(SELECT|INSERT|UPDATE|DELETE|WITH|PRAGMA|CREATE|DROP|ALTER|EXPLAIN|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK)[\s(]/.test(t);
   }
 
+  function isSelectSql(text: string): boolean {
+    const t = text.trimStart().toUpperCase();
+    return /^(SELECT|WITH|PRAGMA|EXPLAIN)[\s(]/.test(t);
+  }
+
   async function callAi(prompt: string): Promise<string> {
-    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : "Ollama";
+    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : aiBackend === "groq" ? `Groq (${groqModel})` : "Ollama";
     if (debug.ai) debug.log(`→ ${backendLabel}\n${prompt}`);
     let result: string;
     if (aiBackend === "gemini") {
       if (!geminiApiKey) throw new Error("Ingen Gemini API-nyckel. Gå till Inställningar → AI-assistent.");
       result = await tauri<string>("query_gemini", { apiKey: geminiApiKey, model: geminiModel, prompt });
+    } else if (aiBackend === "groq") {
+      if (!groqApiKey) throw new Error("Ingen Groq API-nyckel. Gå till Inställningar → AI-assistent.");
+      result = await tauri<string>("query_groq", { apiKey: groqApiKey, model: groqModel, prompt });
     } else {
       const prefs = await loadPrefs();
       const model = prefs.aiModel;
@@ -481,11 +493,13 @@
           candidate = extractSqlFromText(rawTrimmed) || candidate;
         }
         const cleaned = fixSql(candidate);
-        if (looksLikeSql(cleaned)) {
+        if (!looksLikeSql(cleaned)) {
+          aiError = "AI returnerade inte giltig SQL. Försök igen eller byt till chat-läge.";
+        } else if (!isSelectSql(cleaned)) {
+          aiError = "AI försökte ändra databasen — det är inte tillåtet. Försök igen.";
+        } else {
           sqlQuery = cleaned;
           if (aiAutoExec) runQuery(true);
-        } else {
-          aiError = "AI returnerade inte giltig SQL. Försök igen eller byt till chat-läge.";
         }
       }
     } catch (e) {
@@ -549,14 +563,6 @@
     } else {
       items.push({ label: "Öppna webbplats", action: () => {}, disabled: true });
     }
-
-    // Karta
-    const kartaRowIndices = sel.length > 0 ? sel : (result ? result.rows.map((_, i) => i) : []);
-    const kartaRows = getKartaRows(kartaRowIndices);
-    const kartaLabel = sel.length > 1 ? `Visa ${sel.length} markerade på karta` : "Visa på karta";
-    items.push(kartaRows.length > 0
-      ? { label: kartaLabel, action: () => { kartaPanel = kartaRows; } }
-      : { label: "Visa på karta", action: () => {}, disabled: true });
 
     items.push({ separator: true });
 
@@ -625,6 +631,17 @@
         disabled: !harOrgnr || selectedRows.size === 0,
       },
     ];
+
+    const kartaRowIndices = sel.length > 0 ? sel : (result ? result.rows.map((_, i) => i) : []);
+    const kartaRows = getKartaRows(kartaRowIndices);
+    const kartaLabel = sel.length > 1 ? `Visa ${sel.length} markerade på karta` : "Visa på karta";
+    kartaMenuItems = [
+      { label: "Kartsökning", action: () => { kartaSearch = true; }, disabled: !dbPath },
+      { separator: true },
+      kartaRows.length > 0
+        ? { label: kartaLabel, action: () => { kartaPanel = kartaRows; } }
+        : { label: "Visa på karta", action: () => {}, disabled: true },
+    ];
   });
 
 </script>
@@ -652,15 +669,15 @@
           type="text"
           bind:this={aiInput}
           bind:value={aiQuery}
-          placeholder={ollamaReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att installera"}
+          placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
           class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 text-sm placeholder-zinc-600 focus:outline-none transition-colors
-            {ollamaReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
-          readonly={!ollamaReady}
-          onfocus={() => { if (!ollamaReady) onOpenAiSettings(); }}
-          onkeydown={(e) => { if (e.key === "Enter" && ollamaReady) runAiQuery(); }}
+            {aiReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
+          readonly={!aiReady}
+          onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
+          onkeydown={(e) => { if (e.key === "Enter" && aiReady) runAiQuery(); }}
           oninput={(e) => { if (!(e.target as HTMLInputElement).value) aiInfo = ""; }}
         />
-        {#if ollamaReady}
+        {#if aiReady}
           <button
             class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md transition-colors cursor-pointer disabled:opacity-40 shrink-0"
             disabled={!aiQuery.trim() || aiRunning || !dbPath}
@@ -765,11 +782,6 @@
             onclick={() => { showHistory = !showHistory; showSchema = false; }}
             class="text-xs transition-colors cursor-pointer select-none {showHistory ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showHistory ? "Dölj historik" : "Historik"}</button>
-          <button
-            onclick={() => { kartaSearch = true; }}
-            disabled={!dbPath}
-            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none disabled:opacity-30"
-          >Kartasökning</button>
         </div>
         <button
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"

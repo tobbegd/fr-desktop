@@ -482,11 +482,12 @@
         onclick={toggleRouteMode}
       >Avbryt</button>
     {:else}
-      <button
-        class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
-        onclick={startDraw}
-      >Rita markering</button>
-      {#if !searchMode}
+      {#if searchMode}
+        <button
+          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+          onclick={startDraw}
+        >Rita markering</button>
+      {:else}
         <button
           class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
           onclick={toggleRouteMode}
