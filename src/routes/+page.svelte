@@ -35,8 +35,8 @@
   // AI-backend
   let geminiApiKey = $state("");
   let geminiModel = $state("gemini-2.0-flash");
-  let groqApiKey = $state("");
-  let groqModel = $state("meta-llama/llama-3.3-70b-instruct:free");
+  let claudeApiKey = $state("");
+  let claudeModel = $state("claude-haiku-4-5");
   let aiBackend = $state("");
 
   // Offline-inloggningar (nödläge)
@@ -67,8 +67,8 @@
     offlineLogins = p.offlineLogins ?? 0;
     if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
     if (p.geminiModel) geminiModel = p.geminiModel;
-    if (p.groqApiKey) groqApiKey = p.groqApiKey;
-    if (p.groqModel) groqModel = p.groqModel;
+    if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
+    if (p.claudeModel) claudeModel = p.claudeModel;
     if (p.aiBackend) aiBackend = p.aiBackend;
     debug.console = p.debugConsole ?? false;
     debug.ai = p.debugAi ?? false;
@@ -141,7 +141,7 @@
         // Auto-välj backend om ingen är vald ännu
         if (!aiBackend) {
           if (r) aiBackend = "ollama";
-          else if (groqApiKey) aiBackend = "groq";
+          else if (claudeApiKey) aiBackend = "claude";
           else if (geminiApiKey) aiBackend = "gemini";
         }
       });
@@ -364,25 +364,26 @@
       const p = await loadPrefs();
       if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
       if (p.geminiModel) geminiModel = p.geminiModel;
-      if (p.groqApiKey) groqApiKey = p.groqApiKey;
-      if (p.groqModel) groqModel = p.groqModel;
+      if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
+      if (p.claudeModel) claudeModel = p.claudeModel;
     }}
   />
 
 {:else}
   <div class="flex flex-col h-screen bg-zinc-950 text-white">
     <!-- Topmeny -->
-    <header class="h-10 flex items-center justify-between px-2 border-b border-zinc-800 shrink-0">
+    <header class="relative h-10 flex items-center justify-between px-2 border-b border-zinc-800 shrink-0">
       <MenuBar menus={appMenus} />
 
       <!-- AI-backend-toggle -->
-      {#if ollamaReady || geminiApiKey || groqApiKey}
+      <div class="absolute left-1/2 -translate-x-1/2">
+      {#if ollamaReady || geminiApiKey || claudeApiKey}
         <div class="flex rounded-md overflow-hidden border border-zinc-700 text-xs">
-          {#if groqApiKey}
+          {#if claudeApiKey}
             <button
-              onclick={() => setAiBackend("groq")}
-              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'groq' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            >OpenRouter</button>
+              onclick={() => setAiBackend("claude")}
+              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'claude' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
+            >Claude</button>
           {/if}
           {#if geminiApiKey}
             <button
@@ -398,6 +399,7 @@
           {/if}
         </div>
       {/if}
+      </div>
 
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {email}
@@ -465,8 +467,8 @@
       {aiBackend}
       {geminiApiKey}
       {geminiModel}
-      {groqApiKey}
-      {groqModel}
+      {claudeApiKey}
+      {claudeModel}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       bind:actionMenuItems
       bind:mailMenuItems

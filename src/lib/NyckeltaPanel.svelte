@@ -164,8 +164,8 @@
       <div class="flex items-center justify-center h-40 text-zinc-500">Laddar...</div>
     {:else if error}
       <div class="text-red-400 text-sm">{error}</div>
-    {:else if rows.length === 0}
-      <div class="flex items-center justify-center h-40 text-zinc-500">Inga bokslut hittades.</div>
+    {:else if rows.length === 0 || rows.every(r => CHARTS.every(c => r[c.key] === null))}
+      <div class="flex items-center justify-center h-40 text-zinc-500">Inga nyckeltal tillgängliga.</div>
     {:else}
       <!-- Latest values summary -->
       {@const latest = rows[rows.length - 1]}

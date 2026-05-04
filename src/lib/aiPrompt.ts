@@ -17,8 +17,8 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
   telefon:        "bolagets telefon",
   email:          "e-postadress",
   webbadress:     "webbplatsadress",
-  ar_year:                "senaste bokslutår som finns — IS NOT NULL betyder att nyckeltal finns för bolaget",
-  nettoomsattning:        "senaste kända nettoomsättning i kr",
+  ar_year:                "senaste bokslutår som finns",
+  nettoomsattning:        "senaste kända nettoomsättning i kr — IS NOT NULL betyder att nyckeltal finns för bolaget",
   medelantal_anstallda:   "medelantal anställda",
   arets_resultat:         "årets resultat i kr",
   eget_kapital:           "eget kapital i kr",
@@ -43,7 +43,7 @@ Regler:
 - bolag har redan kolumnen webbadress — JOIN:a INTE webbplatser-tabellen för webbadress
 - bolag har redan kolumnerna nettoomsattning, arets_resultat, eget_kapital — JOIN:a INTE arsredovisningar för dessa, använd direkt från bolag
 - JOIN med arsredovisningar ENDAST om användaren specifikt ber om historik eller flera år — då: JOIN (SELECT orgnr, arets_resultat, rakenskapsar_slut FROM arsredovisningar GROUP BY orgnr HAVING rakenskapsar_slut = MAX(rakenskapsar_slut)) AS ar ON ar.orgnr = b.orgnr
-- Om användaren frågar efter bolag med webbadress, e-post eller telefon — filtrera alltid bort NULL och tomma strängar: t.ex. webbadress IS NOT NULL AND webbadress <> ''
+- "Med email", "med webbadress", "med telefon" = fältet MÅSTE finnas — lägg ALLTID till både IS NOT NULL och <> '' för dessa fält. Exempel: email IS NOT NULL AND email <> ''. Utan detta filter returneras bolag som saknar email, vilket är fel.
 - Vid filtrering på numeriska fält (medelantal_anstallda, nettoomsattning, arets_resultat, eget_kapital) — lägg alltid till IS NOT NULL: t.ex. medelantal_anstallda IS NOT NULL AND medelantal_anstallda > 10
 - "Webbyrå" är inte ett SNI-begrepp — sök alltid med BÅDE SNI-termer (dataprogrammering, it-konsult, webbdesign) OCH verksamhet/orgnamn med webb, digital
 `;
@@ -98,6 +98,51 @@ ${sqlContext}
 Fråga: ${question}`;
 }
 
+export function buildSmartPrompt(
+  schema: Record<string, string[]>,
+  question: string,
+  aiExpl: AiExpl = {}
+): string {
+  const columnGuide = buildColumnGuide(schema, aiExpl);
+  const schemaText = Object.entries(schema)
+    .map(([t, cols]) => `${t} (${cols.join(", ")})`)
+    .join("\n");
+
+  return `Du är en SQL-expert för en svensk företagsdatabas i SQLite. Generera ENDAST en giltig SQL-fråga — inga förklaringar, ingen markdown, inget kodblock.
+
+Viktiga regler:
+- Använd ulow(kolumn) LIKE '%term%' för ALL textsökning (hanterar svenska tecken å,ä,ö) — aldrig LOWER()
+- För verksamhetstyp: sök i sni_1_namn, sni_2_namn, sni_3_namn, verksamhet, orgnamn med OR
+- Vardagsord som "verkstad", "butik", "byrå" söks i verksamhet och orgnamn — inte i sni-kolumner
+- "Med email/telefon/webbadress" = IS NOT NULL AND <> ''
+- "Med nyckeltal" = nettoomsattning IS NOT NULL
+- Använd alltid LIMIT — default 200
+- Använd INTE tabellalias (FROM bolag b) om det inte finns en JOIN — referera direkt till kolumnnamn
+- Om alias används: ulow() omsluter kolumnen, INTE aliset — skriv ulow(b.postort), ALDRIG b.ulow(postort)
+
+${columnGuide}
+
+Tabeller:
+${schemaText}
+
+Exempel:
+Fråga: taxi i karlstad
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND (ulow(sni_1_namn) LIKE '%taxi%' OR ulow(sni_2_namn) LIKE '%taxi%' OR ulow(sni_3_namn) LIKE '%taxi%' OR ulow(verksamhet) LIKE '%taxi%' OR ulow(orgnamn) LIKE '%taxi%') LIMIT 200;
+
+Fråga: verkstad i stockholm med nyckeltal
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT 200;
+
+Fråga: restauranger i göteborg med email
+SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT 200;
+
+Fråga: it-konsulter i norrland med historik per år
+SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT 200;
+
+Fråga: ${question}
+
+SQL:`;
+}
+
 export function buildPrompt(
   schema: Record<string, string[]>,
   question: string,
@@ -145,7 +190,10 @@ Fråga: 10 webbyråer från stockholm med fler än 10 anställda
 SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(sni_1_namn) LIKE '%webbyrå%' OR ulow(sni_1_namn) LIKE '%dataprogrammering%' OR ulow(sni_1_namn) LIKE '%it-konsult%' OR ulow(sni_2_namn) LIKE '%webbyrå%' OR ulow(sni_2_namn) LIKE '%dataprogrammering%' OR ulow(verksamhet) LIKE '%webbyrå%' OR ulow(verksamhet) LIKE '%webb%' OR ulow(orgnamn) LIKE '%webbyrå%' OR ulow(orgnamn) LIKE '%webb%') AND medelantal_anstallda IS NOT NULL AND medelantal_anstallda > 10 LIMIT 10;
 
 Fråga: bolag i örebro med nyckeltal
-SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%örebro%' AND ar_year IS NOT NULL LIMIT 200;
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%örebro%' AND nettoomsattning IS NOT NULL LIMIT 200;
+
+Fråga: verkstad med nyckeltal 3st
+SQL: SELECT * FROM bolag WHERE (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT 3;
 
 Fråga: aktiebolag i stockholms län med omsättning över 10 miljoner
 SQL: SELECT orgnamn, sni_1_namn, nettoomsattning, medelantal_anstallda FROM bolag WHERE aktiv = 1 AND orgform = 'AB-ORGFO' AND sateslän = 'Stockholms län' AND nettoomsattning IS NOT NULL AND nettoomsattning > 10000000 ORDER BY nettoomsattning DESC LIMIT 200;
@@ -161,6 +209,16 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND webbadress I
 
 Fråga: restauranger i göteborg med telefon och webbadress
 SQL: SELECT orgnamn, telefon, webbadress FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND telefon IS NOT NULL AND telefon <> '' AND webbadress IS NOT NULL AND webbadress <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%') LIMIT 200;
+
+Fråga: bolag med email
+SQL: SELECT * FROM bolag WHERE email IS NOT NULL AND email <> '' LIMIT 200;
+
+Fråga: bad karlstad bara orgnr och namn och email
+SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%bad%' OR ulow(sni_2_namn) LIKE '%bad%' OR ulow(sni_3_namn) LIKE '%bad%' OR ulow(verksamhet) LIKE '%bad%' OR ulow(orgnamn) LIKE '%bad%') LIMIT 200;
+
+
+Fråga: restauranger i stockholm med email
+SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT 200;
 
 Fråga: bolag i stockholm med email, bara gmail-adresser, sortera på namn
 SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND LOWER(email) LIKE '%@gmail.com' ORDER BY orgnamn LIMIT 200;

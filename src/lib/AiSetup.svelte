@@ -41,7 +41,6 @@
 
   let activeTab = $state("gemini");
 
-  // Claude
   type GeminiModel = { name: string; display_name: string };
   let geminiModels = $state<GeminiModel[]>([]);
   let geminiModelsLoading = $state(false);
@@ -104,8 +103,8 @@
     if (p.aiModel) activeModel = p.aiModel;
     if (p.geminiApiKey) { geminiApiKey = p.geminiApiKey; loadGeminiModels(); }
     if (p.geminiModel) geminiModel = p.geminiModel;
-    if (p.groqApiKey) { groqApiKey = p.groqApiKey; loadOpenRouterModels(); }
-    if (p.groqModel) groqModel = p.groqModel;
+    if (p.claudeApiKey) { claudeApiKey = p.claudeApiKey; loadClaudeModels(); }
+    if (p.claudeModel) claudeModel = p.claudeModel;
   });
 
   async function saveGeminiSettings() {
@@ -121,33 +120,33 @@
   let geminiTesting = $state(false);
   let geminiTestError = $state("");
 
-  // Groq
-  let groqApiKey = $state("");
-  let groqModel = $state("");
-  let groqSaving = $state(false);
-  let groqSaved = $state(false);
-  let groqTesting = $state(false);
-  let groqTestResult = $state("");
-  let groqTestError = $state("");
-  type OpenRouterModel = { id: string; name: string };
-  let openRouterModels = $state<OpenRouterModel[]>([]);
-  let openRouterModelsLoading = $state(false);
-  let openRouterModelsError = $state("");
+  // Claude
+  let claudeApiKey = $state("");
+  let claudeModel = $state("claude-haiku-4-5");
+  let claudeSaving = $state(false);
+  let claudeSaved = $state(false);
+  let claudeTesting = $state(false);
+  let claudeTestResult = $state("");
+  let claudeTestError = $state("");
+  type ClaudeModel = { id: string; display_name: string };
+  let claudeModels = $state<ClaudeModel[]>([]);
+  let claudeModelsLoading = $state(false);
+  let claudeModelsError = $state("");
 
-  async function loadOpenRouterModels() {
-    if (!groqApiKey) return;
-    openRouterModelsLoading = true;
-    openRouterModelsError = "";
+  async function loadClaudeModels() {
+    if (!claudeApiKey) return;
+    claudeModelsLoading = true;
+    claudeModelsError = "";
     try {
-      const raw = await invoke<{ id: string; name: string }[]>("list_openrouter_models", { apiKey: groqApiKey });
-      openRouterModels = raw.map(m => ({ id: m.id, name: m.name ?? m.id }));
-      if (openRouterModels.length && !openRouterModels.some(m => m.id === groqModel)) {
-        groqModel = openRouterModels[0].id;
+      const raw = await invoke<{ id: string; display_name: string }[]>("list_claude_models", { apiKey: claudeApiKey });
+      claudeModels = raw;
+      if (claudeModels.length && !claudeModels.some(m => m.id === claudeModel)) {
+        claudeModel = claudeModels[0].id;
       }
     } catch (e) {
-      openRouterModelsError = String(e);
+      claudeModelsError = String(e);
     } finally {
-      openRouterModelsLoading = false;
+      claudeModelsLoading = false;
     }
   }
 
@@ -169,31 +168,31 @@
     }
   }
 
-  async function saveGroqSettings() {
-    groqSaving = true;
-    groqSaved = false;
-    groqApiKey = groqApiKey.trim();
-    await savePrefs({ groqApiKey, groqModel });
-    groqSaving = false;
-    groqSaved = true;
-    setTimeout(() => { groqSaved = false; }, 2000);
+  async function saveClaudeSettings() {
+    claudeSaving = true;
+    claudeSaved = false;
+    claudeApiKey = claudeApiKey.trim();
+    await savePrefs({ claudeApiKey, claudeModel });
+    claudeSaving = false;
+    claudeSaved = true;
+    setTimeout(() => { claudeSaved = false; }, 2000);
   }
 
-  async function runGroqTest() {
-    groqTesting = true;
-    groqTestResult = "";
-    groqTestError = "";
+  async function runClaudeTest() {
+    claudeTesting = true;
+    claudeTestResult = "";
+    claudeTestError = "";
     try {
       const schema = await invoke<Record<string, string[]>>("get_schema", { dbPath });
-      groqTestResult = await invoke<string>("query_groq", {
-        apiKey: groqApiKey,
-        model: groqModel,
+      claudeTestResult = await invoke<string>("query_claude", {
+        apiKey: claudeApiKey,
+        model: claudeModel,
         prompt: buildPrompt(schema, testPrompt),
       });
     } catch (e) {
-      groqTestError = String(e);
+      claudeTestError = String(e);
     } finally {
-      groqTesting = false;
+      claudeTesting = false;
     }
   }
 
@@ -315,7 +314,7 @@
 
   <!-- Flikar -->
   <div class="flex border-b border-zinc-800 mb-6">
-    {#each [{ id: "groq", label: "OpenRouter (moln, gratis)" }, { id: "gemini", label: "Gemini (moln)" }, { id: "llama", label: "Llama (lokalt)" }] as tab}
+    {#each [{ id: "claude", label: "Claude (moln)" }, { id: "gemini", label: "Gemini (moln, gratis)" }, { id: "llama", label: "Llama (lokalt)" }] as tab}
       <button
         onclick={() => activeTab = tab.id}
         class="px-4 py-2 text-sm transition-colors cursor-pointer border-b-2 -mb-px
@@ -326,8 +325,8 @@
 
   {#if activeTab === "llama"}
     <p class="text-sm text-zinc-400 mb-6 leading-relaxed">
-      Llama körs helt <strong class="text-zinc-200">lokalt på din dator</strong> via Ollama — inga data skickas till externa servrar.
-      Det är <strong class="text-zinc-200">helt gratis</strong> att använda. Kräver att Ollama är installerat och att en modell är nedladdad.
+      Lokala modeller körs helt <strong class="text-zinc-200">lokalt på din dator</strong> via Ollama — inga data skickas till externa servrar och det är <strong class="text-zinc-200">helt gratis</strong>.
+      Modellerna fungerar men är mindre än molnbaserade alternativ, vilket innebär att de ibland kan generera felaktig SQL eller missa detaljer i komplexa frågor. Kontrollera alltid resultatet.
     </p>
 
     <div class="flex flex-col gap-6">
@@ -524,14 +523,15 @@ sudo rm -rf /usr/share/ollama</pre>
       {/if}
     </div>
 
-  {:else if activeTab === "groq"}
+  {:else if activeTab === "claude"}
     <p class="text-sm text-zinc-400 mb-6 leading-relaxed">
-      OpenRouter ger tillgång till många AI-modeller i <strong class="text-zinc-200">molnet</strong> — gratis tier med generösa gränser.
-      Skaffa gratis API-nyckel på
+      Claude är Anthropics AI och körs i <strong class="text-zinc-200">molnet</strong>.
+      Haiku är billigast och räcker utmärkt för SQL-generering (~$0.25/miljon tokens).
+      Skaffa API-nyckel på
       <button
-        onclick={() => openUrl("https://openrouter.ai/keys")}
+        onclick={() => openUrl("https://console.anthropic.com")}
         class="text-zinc-200 underline hover:text-white cursor-pointer transition-colors"
-      >openrouter.ai</button>.
+      >console.anthropic.com</button>.
     </p>
 
     <div class="flex flex-col gap-4 max-w-md">
@@ -539,8 +539,8 @@ sudo rm -rf /usr/share/ollama</pre>
         <p class="text-xs text-zinc-500 mb-1">API-nyckel</p>
         <input
           type="password"
-          bind:value={groqApiKey}
-          placeholder="sk-or-..."
+          bind:value={claudeApiKey}
+          placeholder="sk-ant-..."
           class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
         />
       </div>
@@ -548,38 +548,38 @@ sudo rm -rf /usr/share/ollama</pre>
         <div class="flex items-center justify-between mb-1">
           <p class="text-xs text-zinc-500">Modell</p>
           <button
-            onclick={loadOpenRouterModels}
-            disabled={!groqApiKey || openRouterModelsLoading}
+            onclick={loadClaudeModels}
+            disabled={!claudeApiKey || claudeModelsLoading}
             class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer disabled:opacity-40"
-          >{openRouterModelsLoading ? "Hämtar..." : "Hämta modeller"}</button>
+          >{claudeModelsLoading ? "Hämtar..." : "Hämta modeller"}</button>
         </div>
-        {#if openRouterModelsError}
-          <p class="text-xs text-red-400 mb-1">{openRouterModelsError}</p>
+        {#if claudeModelsError}
+          <p class="text-xs text-red-400 mb-1">{claudeModelsError}</p>
         {/if}
-        {#if openRouterModels.length > 0}
+        {#if claudeModels.length > 0}
           <select
-            bind:value={groqModel}
+            bind:value={claudeModel}
             class="w-full appearance-none bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
           >
-            {#each openRouterModels as m}
-              <option value={m.id}>{m.name} ({m.id})</option>
+            {#each claudeModels as m}
+              <option value={m.id}>{m.display_name}</option>
             {/each}
           </select>
         {:else}
           <input
-            bind:value={groqModel}
-            placeholder="t.ex. meta-llama/llama-3.3-70b-instruct:free"
+            bind:value={claudeModel}
+            placeholder="t.ex. claude-haiku-4-5"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
           />
         {/if}
       </div>
       <button
-        onclick={saveGroqSettings} disabled={groqSaving}
+        onclick={saveClaudeSettings} disabled={claudeSaving}
         class="w-fit px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
-      >{groqSaving ? "Sparar..." : groqSaved ? "Sparat ✓" : "Spara"}</button>
+      >{claudeSaving ? "Sparar..." : claudeSaved ? "Sparat ✓" : "Spara"}</button>
     </div>
 
-    {#if groqApiKey}
+    {#if claudeApiKey}
       <div class="mt-6">
         <h2 class="text-sm font-medium text-zinc-200 mb-3">Testkörning</h2>
         <div class="flex flex-col gap-3">
@@ -590,13 +590,13 @@ sudo rm -rf /usr/share/ollama</pre>
           ></textarea>
           <button
             class="w-fit px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
-            onclick={runGroqTest} disabled={groqTesting}
-          >{groqTesting ? "Genererar..." : "Generera SQL"}</button>
-          {#if groqTestResult}
-            <pre class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-green-300 font-mono whitespace-pre-wrap">{groqTestResult}</pre>
+            onclick={runClaudeTest} disabled={claudeTesting}
+          >{claudeTesting ? "Genererar..." : "Generera SQL"}</button>
+          {#if claudeTestResult}
+            <pre class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-green-300 font-mono whitespace-pre-wrap">{claudeTestResult}</pre>
           {/if}
-          {#if groqTestError}
-            <p class="text-xs text-red-400">{groqTestError}</p>
+          {#if claudeTestError}
+            <p class="text-xs text-red-400">{claudeTestError}</p>
           {/if}
         </div>
       </div>

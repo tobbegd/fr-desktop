@@ -21,8 +21,8 @@ export interface Prefs {
   aiModel: string;
   geminiApiKey: string;
   geminiModel: string;
-  groqApiKey: string;
-  groqModel: string;
+  claudeApiKey: string;
+  claudeModel: string;
   aiBackend: string;
   debugConsole: boolean;
   debugAi: boolean;
@@ -49,8 +49,8 @@ const defaults: Prefs = {
   aiModel: "",
   geminiApiKey: "",
   geminiModel: "gemini-2.0-flash",
-  groqApiKey: "",
-  groqModel: "meta-llama/llama-3.3-70b-instruct:free",
+  claudeApiKey: "",
+  claudeModel: "claude-haiku-4-5",
   aiBackend: "",
   debugConsole: false,
   debugAi: false,

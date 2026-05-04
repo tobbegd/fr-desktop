@@ -12,7 +12,7 @@
   import KartaPanel from "./KartaPanel.svelte";
   import { loadPrefs } from "$lib/store";
   import { debug } from "$lib/debug.svelte";
-  import { buildPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
+  import { buildPrompt, buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
   import type { MenuItem } from "./MenuBar.svelte";
 
   type Props = {
@@ -21,14 +21,14 @@
     aiBackend: string;
     geminiApiKey: string;
     geminiModel: string;
-    groqApiKey: string;
-    groqModel: string;
+    claudeApiKey: string;
+    claudeModel: string;
     onOpenAiSettings: () => void;
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, groqApiKey, groqModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, claudeApiKey, claudeModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -40,7 +40,7 @@
   let sqlQuery = $state("");
 
   // AI
-  const aiReady = $derived(ollamaReady || !!geminiApiKey || !!groqApiKey);
+  const aiReady = $derived(ollamaReady || !!geminiApiKey || !!claudeApiKey);
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
@@ -150,7 +150,7 @@
   let hoveredRow = $state<number | null>(null);
 
   const ROW_INDICATORS = [
-    { key: "ar_year",    label: "Nyckeltal", icon: "📊" },
+    { key: "nettoomsattning", label: "Nyckeltal", icon: "📊" },
     { key: "webbadress", label: "Webb",      icon: "🌐" },
     { key: "email",      label: "E-post",    icon: "✉️" },
     { key: "telefon",    label: "Telefon",   icon: "📞" },
@@ -454,15 +454,15 @@
   }
 
   async function callAi(prompt: string): Promise<string> {
-    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : aiBackend === "groq" ? `Groq (${groqModel})` : "Ollama";
+    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : aiBackend === "claude" ? `Claude (${claudeModel})` : "Ollama";
     if (debug.ai) debug.log(`→ ${backendLabel}\n${prompt}`);
     let result: string;
     if (aiBackend === "gemini") {
       if (!geminiApiKey) throw new Error("Ingen Gemini API-nyckel. Gå till Inställningar → AI-assistent.");
       result = await tauri<string>("query_gemini", { apiKey: geminiApiKey, model: geminiModel, prompt });
-    } else if (aiBackend === "groq") {
-      if (!groqApiKey) throw new Error("Ingen Groq API-nyckel. Gå till Inställningar → AI-assistent.");
-      result = await tauri<string>("query_groq", { apiKey: groqApiKey, model: groqModel, prompt });
+    } else if (aiBackend === "claude") {
+      if (!claudeApiKey) throw new Error("Ingen Claude API-nyckel. Gå till Inställningar → AI-assistent.");
+      result = await tauri<string>("query_claude", { apiKey: claudeApiKey, model: claudeModel, prompt });
     } else {
       const prefs = await loadPrefs();
       const model = prefs.aiModel;
@@ -486,7 +486,8 @@
         aiInfo = raw.trim();
         aiInfoSql = extractSqlFromText(aiInfo);
       } else {
-        const raw = await callAi(buildPrompt(schema, aiQuery, aiExpl));
+        const promptFn = (aiBackend === "claude" || aiBackend === "gemini") ? buildSmartPrompt : buildPrompt;
+        const raw = await callAi(promptFn(schema, aiQuery, aiExpl));
         const rawTrimmed = raw.trim();
         let candidate = rawTrimmed.replace(/^```sql\n?/i, "").replace(/```$/, "").trim();
         if (!looksLikeSql(candidate)) {
@@ -685,10 +686,10 @@
           >
             {#if aiRunning}
               <span class="flex items-center gap-1.5">
-                <span class="flex gap-0.5">
-                  <span class="w-1 h-1 rounded-full bg-rose-400 animate-bounce [animation-delay:0ms]"></span>
-                  <span class="w-1 h-1 rounded-full bg-amber-400 animate-bounce [animation-delay:150ms]"></span>
-                  <span class="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:300ms]"></span>
+                <span class="flex gap-1">
+                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:0ms]" style="background:#ff3366;filter:drop-shadow(0 0 5px #ff3366) drop-shadow(0 0 10px #ff3366)"></span>
+                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:150ms]" style="background:#ffcc00;filter:drop-shadow(0 0 5px #ffcc00) drop-shadow(0 0 10px #ffcc00)"></span>
+                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:300ms]" style="background:#00ff88;filter:drop-shadow(0 0 5px #00ff88) drop-shadow(0 0 10px #00ff88)"></span>
                 </span>
                 Tänker
               </span>
