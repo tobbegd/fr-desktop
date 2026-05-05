@@ -12,6 +12,7 @@
   import MailPage from "$lib/MailPage.svelte";
   import { debug } from "$lib/debug.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
+  import MessagesPanel from "$lib/MessagesPanel.svelte";
 
   type View = "auth" | "main" | "settings" | "mail";
   let prevView = $state<View>("auth");
@@ -53,6 +54,12 @@
   // Nedladdningsstatus
   let downloading = $state(false);
   let downloadProgress = $state(0);
+
+  // Meddelanden & frågor
+  let pendingQuestions = $state<{ id: number; body: string }[]>([]);
+  let canMessage = $state(false);
+  let showMessagesPanel = $state(false);
+  let messagesPollTimer: ReturnType<typeof setInterval> | null = null;
 
   // Ladda sparade prefs vid start
   loadPrefs().then(async p => {
@@ -145,6 +152,30 @@
           else if (geminiApiKey) aiBackend = "gemini";
         }
       });
+    }
+  });
+
+  async function pollMessages() {
+    if (!apiKey || !isOnline) return;
+    try {
+      const result = await invoke<{ can_message: boolean; questions: { id: number; body: string }[] }>(
+        "fetch_questions", { serverUrl, apiKey }
+      );
+      pendingQuestions = result.questions;
+      canMessage = result.can_message;
+    } catch {
+      // ignorera nätverksfel tyst
+    }
+  }
+
+  $effect(() => {
+    if (view === "main" && isOnline === true && apiKey) {
+      pollMessages();
+      if (messagesPollTimer) clearInterval(messagesPollTimer);
+      messagesPollTimer = setInterval(pollMessages, 5 * 60 * 1000);
+      return () => {
+        if (messagesPollTimer) clearInterval(messagesPollTimer);
+      };
     }
   });
 
@@ -402,6 +433,21 @@
       </div>
 
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
+        {#if isOnline === true && apiKey}
+          <button
+            onclick={() => showMessagesPanel = !showMessagesPanel}
+            class="relative text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            title="Meddelanden"
+            aria-label="Meddelanden"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            {#if pendingQuestions.length > 0}
+              <span class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full"></span>
+            {/if}
+          </button>
+        {/if}
         {email}
         {#if isOnline === true}
           <span class="text-green-500" title="Ansluten">●</span>
@@ -474,5 +520,16 @@
       bind:mailMenuItems
       bind:kartaMenuItems
     />
+
+    {#if showMessagesPanel}
+      <MessagesPanel
+        {serverUrl}
+        {apiKey}
+        {canMessage}
+        questions={pendingQuestions}
+        onClose={() => showMessagesPanel = false}
+        onRefresh={pollMessages}
+      />
+    {/if}
   </div>
 {/if}

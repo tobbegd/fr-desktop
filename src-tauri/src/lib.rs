@@ -1251,6 +1251,68 @@ async fn send_test_email(
     Ok(())
 }
 
+// ---- Messages & Questions ----
+
+#[derive(Serialize, Deserialize)]
+struct QuestionItem {
+    id: i64,
+    body: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct QuestionsResult {
+    can_message: bool,
+    questions: Vec<QuestionItem>,
+}
+
+#[tauri::command]
+async fn fetch_questions(server_url: String, api_key: String) -> Result<QuestionsResult, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/api/questions", server_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Serverfel: {}", resp.status()));
+    }
+    resp.json::<QuestionsResult>().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn respond_question(server_url: String, api_key: String, question_id: i64, body: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/questions/{}/respond", server_url, question_id))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&serde_json::json!({ "body": body }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Serverfel: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_message(server_url: String, api_key: String, body: String) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/messages", server_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&serde_json::json!({ "body": body }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    match resp.status() {
+        reqwest::StatusCode::FORBIDDEN => Err("Meddelandegräns nådd".to_string()),
+        s if !s.is_success() => Err(format!("Serverfel: {}", s)),
+        _ => Ok(()),
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -1294,7 +1356,10 @@ pub fn run() {
             delete_utskick,
             get_utskick_info,
             cancel_utskick,
-            post_utskick
+            post_utskick,
+            fetch_questions,
+            respond_question,
+            send_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
