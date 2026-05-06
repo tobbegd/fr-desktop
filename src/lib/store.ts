@@ -33,6 +33,8 @@ export interface Prefs {
   smtpPassword: string;
   smtpFromName: string;
   smtpFromEmail: string;
+  tableFontSize: number;
+  editorFontSize: number;
 }
 
 const defaults: Prefs = {
@@ -61,6 +63,8 @@ const defaults: Prefs = {
   smtpPassword: "",
   smtpFromName: "",
   smtpFromEmail: "",
+  tableFontSize: 12,
+  editorFontSize: 14,
 };
 
 export async function loadPrefs(): Promise<Prefs> {

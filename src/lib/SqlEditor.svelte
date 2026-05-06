@@ -54,7 +54,7 @@
         EditorState.languageData.of(() => [{ autocomplete: columnFallback }]),
         oneDark,
         EditorView.theme({
-          "&": { borderRadius: "0.5rem", fontSize: "0.875rem" },
+          "&": { borderRadius: "0.5rem", fontSize: "var(--editor-font-size, 0.875rem)" },
           ".cm-editor": { borderRadius: "0.5rem" },
           ".cm-scroller": { fontFamily: "monospace", borderRadius: "0.5rem" },
           ".cm-content": { padding: "8px 4px", minHeight: "72px" },

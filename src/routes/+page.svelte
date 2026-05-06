@@ -11,6 +11,7 @@
   import DebugConsole from "$lib/DebugConsole.svelte";
   import MailPage from "$lib/MailPage.svelte";
   import { debug } from "$lib/debug.svelte";
+  import { appearance } from "$lib/appearance.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
   import MessagesPanel from "$lib/MessagesPanel.svelte";
 
@@ -79,6 +80,8 @@
     if (p.aiBackend) aiBackend = p.aiBackend;
     debug.console = p.debugConsole ?? false;
     debug.ai = p.debugAi ?? false;
+    appearance.tableFontSize = p.tableFontSize ?? 12;
+    appearance.editorFontSize = p.editorFontSize ?? 14;
 
     if (p.apiKey) {
       view = "main";
@@ -177,6 +180,11 @@
         if (messagesPollTimer) clearInterval(messagesPollTimer);
       };
     }
+  });
+
+  $effect(() => {
+    document.documentElement.style.setProperty("--table-font-size", `${appearance.tableFontSize}px`);
+    document.documentElement.style.setProperty("--editor-font-size", `${appearance.editorFontSize}px`);
   });
 
   async function setAiBackend(backend: string) {

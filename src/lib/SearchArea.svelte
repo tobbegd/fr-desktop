@@ -671,7 +671,8 @@
           bind:this={aiInput}
           bind:value={aiQuery}
           placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
-          class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 text-sm placeholder-zinc-600 focus:outline-none transition-colors
+          style="font-size: var(--table-font-size, 12px)"
+          class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 placeholder-zinc-600 focus:outline-none transition-colors
             {aiReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
           readonly={!aiReady}
           onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
@@ -711,7 +712,7 @@
       {#if aiInfo}
         <div class="relative mt-1 mb-3">
           <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 max-h-48 overflow-y-auto">
-            <p class="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">{aiInfo}</p>
+            <p class="text-zinc-300 whitespace-pre-wrap leading-relaxed" style="font-size: var(--table-font-size, 12px)">{aiInfo}</p>
           </div>
           <div class="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
             {#if aiInfoSql}
@@ -844,7 +845,7 @@
 
         <!-- Tabell (scrollar, sticky header fungerar här) -->
         <div class="flex-1 overflow-auto min-h-0" use:hscroll>
-          <table class="min-w-full text-xs text-left border-collapse">
+          <table class="min-w-full text-left border-collapse" style="font-size: var(--table-font-size, 12px)">
             <thead>
               <tr>
                 {#each result.columns as col}

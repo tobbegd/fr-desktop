@@ -2,6 +2,7 @@
   import AiSetup from "$lib/AiSetup.svelte";
   import SmtpSetup from "$lib/SmtpSetup.svelte";
   import { debug } from "$lib/debug.svelte";
+  import { appearance } from "$lib/appearance.svelte";
   import { savePrefs } from "$lib/store";
 
   type Props = {
@@ -25,6 +26,7 @@
     { id: "auth", label: "Autentisering" },
     { id: "ai", label: "AI-assistent" },
     { id: "mail", label: "Mailutskick" },
+    { id: "appearance", label: "Utseende" },
     { id: "debug", label: "Debug" },
   ];
 
@@ -110,6 +112,49 @@
         <AiSetup {dbPath} />
       {:else if activeSection === "mail"}
         <SmtpSetup />
+      {:else if activeSection === "appearance"}
+        <div class="max-w-md flex flex-col gap-8">
+          <div>
+            <p class="text-sm text-zinc-200 mb-1">Tabellstorlek</p>
+            <p class="text-xs text-zinc-500 mb-3">Teckenstorlek i resultattabellen.</p>
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                min="10"
+                max="18"
+                step="1"
+                value={appearance.tableFontSize}
+                oninput={async (e) => {
+                  const v = parseInt((e.target as HTMLInputElement).value);
+                  appearance.tableFontSize = v;
+                  await savePrefs({ tableFontSize: v });
+                }}
+                class="flex-1 accent-zinc-400 cursor-pointer"
+              />
+              <span class="text-sm text-zinc-400 w-12 text-right">{appearance.tableFontSize}px</span>
+            </div>
+          </div>
+          <div>
+            <p class="text-sm text-zinc-200 mb-1">SQL-editor</p>
+            <p class="text-xs text-zinc-500 mb-3">Teckenstorlek i SQL-editorn.</p>
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                min="10"
+                max="18"
+                step="1"
+                value={appearance.editorFontSize}
+                oninput={async (e) => {
+                  const v = parseInt((e.target as HTMLInputElement).value);
+                  appearance.editorFontSize = v;
+                  await savePrefs({ editorFontSize: v });
+                }}
+                class="flex-1 accent-zinc-400 cursor-pointer"
+              />
+              <span class="text-sm text-zinc-400 w-12 text-right">{appearance.editorFontSize}px</span>
+            </div>
+          </div>
+        </div>
       {:else if activeSection === "debug"}
         <div class="max-w-md flex flex-col gap-6">
           <label class="flex items-center gap-3 cursor-pointer">
