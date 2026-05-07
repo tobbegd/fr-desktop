@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { fade } from "svelte/transition";
   import Settings from "$lib/Settings.svelte";
   import SearchArea from "$lib/SearchArea.svelte";
@@ -21,7 +23,7 @@
   let view = $state<View>("auth");
   let settingsInitialSection = $state("general");
   let ollamaReady = $state(false);
-  let serverUrl = $state(import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se");
+  let serverUrl = $state(import.meta.env.VITE_SERVER_URL ?? (import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se"));
   let apiKey = $state("");
   let email = $state("");
   let tier = $state("");
@@ -52,9 +54,14 @@
   let updateEtag = $state("");
   let hasCheckedUpdate = $state(false);
 
-  // Nedladdningsstatus
+  // Nedladdningsstatus (databas)
   let downloading = $state(false);
   let downloadProgress = $state(0);
+
+  // App-uppdatering
+  let appUpdate = $state<Update | null>(null);
+  let appUpdating = $state(false);
+  let appUpdateProgress = $state(0);
 
   // Meddelanden & frågor
   let pendingQuestions = $state<{ id: number; body: string }[]>([]);
@@ -140,6 +147,7 @@
     if (view === "main" && !hasCheckedUpdate && tier) {
       hasCheckedUpdate = true;
       checkForUpdate();
+      checkForAppUpdate();
     }
   });
 
@@ -224,6 +232,36 @@
       }
     } catch (e) {
       log(`Manifest-kontroll misslyckades: ${e}`);
+    }
+  }
+
+  async function checkForAppUpdate() {
+    try {
+      const update = await checkUpdate();
+      if (update) appUpdate = update;
+    } catch {
+      // ignorera tyst — uppdateringskollen är best-effort
+    }
+  }
+
+  async function doAppUpdate() {
+    if (!appUpdate) return;
+    appUpdating = true;
+    appUpdateProgress = 0;
+    try {
+      let downloaded = 0;
+      let total = 0;
+      await appUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started") total = event.data.contentLength ?? 0;
+        if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total > 0) appUpdateProgress = Math.round((downloaded / total) * 100);
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      showStatus(String(e), "error");
+      appUpdating = false;
     }
   }
 
@@ -465,7 +503,31 @@
       </span>
     </header>
 
-    <!-- Uppdateringsbanner -->
+    <!-- App-uppdateringsbanner -->
+    {#if appUpdate && !appUpdating}
+      <div class="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
+        <span class="text-sm text-zinc-300">
+          Ny version av appen tillgänglig — {appUpdate.version}
+          {#if appUpdate.body}<span class="text-zinc-500 text-xs ml-2">{appUpdate.body}</span>{/if}
+        </span>
+        <button
+          class="px-3 py-1 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer"
+          onclick={doAppUpdate}
+        >Installera och starta om</button>
+      </div>
+    {:else if appUpdating}
+      <div class="px-4 py-2.5 bg-zinc-900 border-b border-zinc-800">
+        <div class="flex justify-between text-xs text-zinc-400 mb-1.5">
+          <span>Installerar appuppdatering...</span>
+          <span>{appUpdateProgress}%</span>
+        </div>
+        <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
+          <div class="h-full bg-white rounded-full transition-all duration-200" style="width: {appUpdateProgress}%"></div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Databasuppdateringsbanner -->
     {#if updateAvailable && !downloading}
       <div class="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
         <span class="text-sm text-zinc-300">

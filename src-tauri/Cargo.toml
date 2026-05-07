@@ -1,6 +1,6 @@
 [package]
 name = "fr-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -32,4 +32,6 @@ rfd = "0.15"
 base64 = "0.22"
 futures-util = "0.3"
 lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
