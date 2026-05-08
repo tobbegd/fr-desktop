@@ -19,6 +19,7 @@
     dbPath: string;
     ollamaReady: boolean;
     aiBackend: string;
+    aiModel: string;
     geminiApiKey: string;
     geminiModel: string;
     claudeApiKey: string;
@@ -28,7 +29,7 @@
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, aiBackend, geminiApiKey, geminiModel, claudeApiKey, claudeModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, ollamaReady, aiBackend, aiModel, geminiApiKey, geminiModel, claudeApiKey, claudeModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -40,7 +41,7 @@
   let sqlQuery = $state("");
 
   // AI
-  const aiReady = $derived(ollamaReady || !!geminiApiKey || !!claudeApiKey);
+  const aiReady = $derived((ollamaReady && !!aiModel) || !!geminiApiKey || !!claudeApiKey);
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
@@ -454,6 +455,7 @@
   }
 
   async function callAi(prompt: string): Promise<string> {
+    if (!aiBackend) throw new Error("Ingen AI-backend vald. Gå till Inställningar → AI-assistent och välj Claude, Gemini eller Ollama.");
     const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : aiBackend === "claude" ? `Claude (${claudeModel})` : "Ollama";
     if (debug.ai) debug.log(`→ ${backendLabel}\n${prompt}`);
     let result: string;

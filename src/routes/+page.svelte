@@ -42,6 +42,7 @@
   let claudeApiKey = $state("");
   let claudeModel = $state("claude-haiku-4-5");
   let aiBackend = $state("");
+  let aiModel = $state("");
 
   // Offline-inloggningar (nödläge)
   const OFFLINE_MAX = 2;
@@ -85,6 +86,7 @@
     if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
     if (p.claudeModel) claudeModel = p.claudeModel;
     if (p.aiBackend) aiBackend = p.aiBackend;
+    if (p.aiModel) aiModel = p.aiModel;
     debug.console = p.debugConsole ?? false;
     debug.ai = p.debugAi ?? false;
     appearance.tableFontSize = p.tableFontSize ?? 12;
@@ -443,6 +445,12 @@
       if (p.geminiModel) geminiModel = p.geminiModel;
       if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
       if (p.claudeModel) claudeModel = p.claudeModel;
+      if (p.aiModel) aiModel = p.aiModel;
+      if (!aiBackend) {
+        if (p.claudeApiKey) { aiBackend = "claude"; await savePrefs({ aiBackend: "claude" }); }
+        else if (p.geminiApiKey) { aiBackend = "gemini"; await savePrefs({ aiBackend: "gemini" }); }
+        else if (ollamaReady && p.aiModel) { aiBackend = "ollama"; await savePrefs({ aiBackend: "ollama" }); }
+      }
     }}
   />
 
@@ -468,7 +476,7 @@
               class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'gemini' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
             >Gemini</button>
           {/if}
-          {#if ollamaReady}
+          {#if ollamaReady && aiModel}
             <button
               onclick={() => setAiBackend("ollama")}
               class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'ollama' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
@@ -581,6 +589,7 @@
       {dbPath}
       {ollamaReady}
       {aiBackend}
+      {aiModel}
       {geminiApiKey}
       {geminiModel}
       {claudeApiKey}

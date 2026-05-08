@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "fr-app",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "identifier": "se.foretagsdatabasen.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "FDB-Desktop v0.1.1",
+        "title": "FDB-Desktop v0.1.5",
         "width": 800,
         "height": 600
       }
@@ -25,7 +25,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMzgwNzhGRDQ5QjhCQjUKUldTMWk1dlVqd2M0S3VJcGUxQ01BaTM2eStzcDl4R3pDbXZKemx0MGpPeVJ5V0VzeE1qMWd4M1EK",
       "endpoints": [
-        "https://foretagsdatabasen.se/desktop/latest.json"
+        "https://foretagsdatabas.se/output/desktop/latest.json/output/desktop/latest.json"
       ]
     }
   },
