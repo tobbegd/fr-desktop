@@ -102,16 +102,22 @@
         showStatus("autentiserar ...", "info", 0);
         verifyInBackground(p.serverUrl || serverUrl, p.apiKey);
       } else {
-        // Normalt läge: kontrollera var 3:e start
+        // Demo-tier verifierar alltid — demotiden kan löpa ut när som helst
         isOnline = true;
-        const newCount = (p.launchCount ?? 0) + 1;
-        await savePrefs({ launchCount: newCount });
-        if (newCount % 3 === 0) {
+        if (p.tier === "demo") {
           showStatus("autentiserar ...", "info", 0);
           verifyInBackground(p.serverUrl || serverUrl, p.apiKey);
         } else {
-          const next = 3 - (newCount % 3);
-          showStatus(`autentisering om (${next})`, "info", 4000);
+          // Normalt läge: kontrollera var 3:e start
+          const newCount = (p.launchCount ?? 0) + 1;
+          await savePrefs({ launchCount: newCount });
+          if (newCount % 3 === 0) {
+            showStatus("autentiserar ...", "info", 0);
+            verifyInBackground(p.serverUrl || serverUrl, p.apiKey);
+          } else {
+            const next = 3 - (newCount % 3);
+            showStatus(`autentisering om (${next})`, "info", 4000);
+          }
         }
       }
     }
@@ -119,14 +125,14 @@
 
   async function verifyInBackground(url: string, key: string) {
     try {
-      await invoke<{ email: string; tier: string }>("verify_license", { serverUrl: url, apiKey: key });
+      const result = await invoke<{ email: string; tier: string }>("verify_license", { serverUrl: url, apiKey: key });
       // Lyckades — tillbaka till normalt läge
       isOnline = true;
       clearStatus();
-      if (offlineLogins > 0) {
-        offlineLogins = 0;
-        await savePrefs({ offlineLogins: 0 });
-      }
+      const updates: Record<string, unknown> = {};
+      if (result.tier !== tier) { tier = result.tier; updates.tier = result.tier; }
+      if (offlineLogins > 0) { offlineLogins = 0; updates.offlineLogins = 0; }
+      if (Object.keys(updates).length > 0) await savePrefs(updates);
     } catch (e) {
       const msg = String(e);
       if (msg.includes("402") || msg.toLowerCase().includes("demotiden")) {
@@ -153,10 +159,23 @@
   $effect(() => {
     if (view === "main" && !hasCheckedUpdate && tier) {
       hasCheckedUpdate = true;
-      checkForUpdate();
-      checkForAppUpdate();
+      checkDbFileExists().then(() => {
+        checkForUpdate();
+        checkForAppUpdate();
+      });
     }
   });
+
+  async function checkDbFileExists() {
+    if (!dbPath) return;
+    const exists = await invoke<boolean>("file_exists", { path: dbPath });
+    if (!exists) {
+      log("DB-fil saknas lokalt — återställer etag/sha256 för att tvinga ny nedladdning");
+      dbEtag = "";
+      dbSha256 = "";
+      await savePrefs({ dbEtag: "", dbSha256: "" });
+    }
+  }
 
   // Kör ollama-check varje gång man går till main-vyn
   $effect(() => {
@@ -217,7 +236,8 @@
   }
 
   async function checkForUpdate() {
-    log(`Kontrollerar manifest för tier=${tier}...`);
+    const manifestTier = tier === "demo" || tier === "desktop" ? "pro" : tier;
+    log(`Kontrollerar manifest för tier=${tier} (manifest: ${manifestTier})...`);
     try {
       const result = await invoke<{
         needs_update: boolean;
@@ -225,7 +245,7 @@
         etag: string;
       }>("check_manifest", {
         serverUrl,
-        tier,
+        tier: manifestTier,
         currentEtag: dbEtag,
         currentSha256: dbSha256,
       });
@@ -437,7 +457,7 @@
       <p class="text-zinc-400 text-sm mb-6">Fortsätt använda Företagsdatabasen genom att skaffa en prenumeration.</p>
       <button
         class="w-full bg-white text-zinc-900 font-medium rounded-lg py-2 text-sm hover:bg-zinc-200 transition-colors cursor-pointer"
-        onclick={() => openUrl(`${serverUrl}/account`)}
+        onclick={() => openUrl(`${serverUrl}/set-password`)}
       >
         Fortsätt efter demotiden
       </button>
@@ -457,6 +477,12 @@
     {dbPath}
     initialSection={settingsInitialSection}
     onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
+    onLogout={async () => {
+      await savePrefs({ apiKey: "", email: "", tier: "", offlineLogins: 0, dbEtag: "", dbSha256: "" });
+      apiKey = ""; email = ""; tier = ""; offlineLogins = 0; dbEtag = ""; dbSha256 = "";
+      statusMsg = "";
+      view = "auth";
+    }}
     onClose={async () => {
       view = "main";
       settingsInitialSection = "general";

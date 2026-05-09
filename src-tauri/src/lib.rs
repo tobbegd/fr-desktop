@@ -70,11 +70,15 @@ struct ManifestCheckResult {
 }
 
 fn tier_to_manifest_key(tier: &str) -> &str {
-    if tier == "desktop" {
-        "pro"
-    } else {
-        tier
+    match tier {
+        "desktop" | "demo" => "pro",
+        t => t,
     }
+}
+
+#[tauri::command]
+fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
 }
 
 #[tauri::command]
@@ -1361,7 +1365,8 @@ pub fn run() {
             post_utskick,
             fetch_questions,
             respond_question,
-            send_message
+            send_message,
+            file_exists
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -14,10 +14,11 @@
     dbPath: string;
     initialSection?: string;
     onChangeKey: () => void;
+    onLogout: () => void;
     onClose: () => void;
   };
 
-  let { serverUrl, apiKey, email, tier, dbExportDate, dbPath, initialSection = "general", onChangeKey, onClose }: Props = $props();
+  let { serverUrl, apiKey, email, tier, dbExportDate, dbPath, initialSection = "general", onChangeKey, onLogout, onClose }: Props = $props();
 
   let activeSection = $state(initialSection);
 
@@ -101,12 +102,20 @@
               <p class="text-sm text-zinc-200 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 font-mono">{maskedKey(apiKey)}</p>
             </div>
           </div>
-          <button
-            class="w-fit bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors cursor-pointer"
-            onclick={onChangeKey}
-          >
-            Ändra nyckel
-          </button>
+          <div style="display: flex; gap: 0.5rem;">
+            <button
+              class="w-fit bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors cursor-pointer"
+              onclick={onChangeKey}
+            >
+              Ändra nyckel
+            </button>
+            <button
+              class="w-fit bg-zinc-800 hover:bg-red-900 text-red-400 text-sm font-medium rounded-lg px-4 py-2 transition-colors cursor-pointer"
+              onclick={onLogout}
+            >
+              Logga ut
+            </button>
+          </div>
         </div>
       {:else if activeSection === "ai"}
         <AiSetup {dbPath} />
