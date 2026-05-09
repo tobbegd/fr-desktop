@@ -16,8 +16,9 @@
   import { appearance } from "$lib/appearance.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
   import MessagesPanel from "$lib/MessagesPanel.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
-  type View = "auth" | "main" | "settings" | "mail";
+  type View = "auth" | "main" | "settings" | "mail" | "demo-expired";
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
@@ -128,7 +129,11 @@
       }
     } catch (e) {
       const msg = String(e);
-      const isAuthError = msg.includes("401") || msg.includes("402")
+      if (msg.includes("402") || msg.toLowerCase().includes("demotiden")) {
+        view = "demo-expired";
+        return;
+      }
+      const isAuthError = msg.includes("401")
         || msg.toLowerCase().includes("prenumeration")
         || msg.toLowerCase().includes("ogiltig");
       if (!isAuthError) {
@@ -421,6 +426,21 @@
           {loading ? "Verifierar..." : "Aktivera"}
         </button>
       </div>
+    </div>
+  </div>
+
+{:else if view === "demo-expired"}
+  <div class="flex items-center justify-center h-screen bg-zinc-950">
+    <div class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-xl p-8 shadow-2xl text-center">
+      <div class="text-4xl mb-4">⏱</div>
+      <h1 class="text-xl font-semibold text-white mb-2">Din demotid har löpt ut</h1>
+      <p class="text-zinc-400 text-sm mb-6">Fortsätt använda Företagsdatabasen genom att skaffa en prenumeration.</p>
+      <button
+        class="w-full bg-white text-zinc-900 font-medium rounded-lg py-2 text-sm hover:bg-zinc-200 transition-colors cursor-pointer"
+        onclick={() => openUrl(`${serverUrl}/account`)}
+      >
+        Fortsätt efter demotiden
+      </button>
     </div>
   </div>
 
