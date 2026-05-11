@@ -23,7 +23,6 @@
 
   let view = $state<View>("auth");
   let settingsInitialSection = $state("general");
-  let ollamaReady = $state(false);
   let serverUrl = $state(import.meta.env.VITE_SERVER_URL ?? (import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se"));
   let apiKey = $state("");
   let email = $state("");
@@ -37,13 +36,6 @@
   let dbPath = $state("");
   let dbExportDate = $state("");
 
-  // AI-backend
-  let geminiApiKey = $state("");
-  let geminiModel = $state("gemini-2.0-flash");
-  let claudeApiKey = $state("");
-  let claudeModel = $state("claude-haiku-4-5");
-  let aiBackend = $state("");
-  let aiModel = $state("");
 
   // Offline-inloggningar (nödläge)
   const OFFLINE_MAX = 2;
@@ -82,12 +74,6 @@
     if (p.dbPath) dbPath = p.dbPath;
     if (p.dbExportDate) dbExportDate = p.dbExportDate;
     offlineLogins = p.offlineLogins ?? 0;
-    if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
-    if (p.geminiModel) geminiModel = p.geminiModel;
-    if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
-    if (p.claudeModel) claudeModel = p.claudeModel;
-    if (p.aiBackend) aiBackend = p.aiBackend;
-    if (p.aiModel) aiModel = p.aiModel;
     debug.console = p.debugConsole ?? false;
     debug.ai = p.debugAi ?? false;
     appearance.tableFontSize = p.tableFontSize ?? 12;
@@ -177,20 +163,6 @@
     }
   }
 
-  // Kör ollama-check varje gång man går till main-vyn
-  $effect(() => {
-    if (view === "main" && tier) {
-      invoke<boolean>("check_ollama").then(r => {
-        ollamaReady = r;
-        // Auto-välj backend om ingen är vald ännu
-        if (!aiBackend) {
-          if (r) aiBackend = "ollama";
-          else if (claudeApiKey) aiBackend = "claude";
-          else if (geminiApiKey) aiBackend = "gemini";
-        }
-      });
-    }
-  });
 
   async function pollMessages() {
     if (!apiKey || !isOnline) return;
@@ -220,11 +192,6 @@
     document.documentElement.style.setProperty("--table-font-size", `${appearance.tableFontSize}px`);
     document.documentElement.style.setProperty("--editor-font-size", `${appearance.editorFontSize}px`);
   });
-
-  async function setAiBackend(backend: string) {
-    aiBackend = backend;
-    await savePrefs({ aiBackend: backend });
-  }
 
   function log(msg: string) {
     console.log(`[FDB] ${msg}`);
@@ -487,16 +454,6 @@
       view = "main";
       settingsInitialSection = "general";
       const p = await loadPrefs();
-      if (p.geminiApiKey) geminiApiKey = p.geminiApiKey;
-      if (p.geminiModel) geminiModel = p.geminiModel;
-      if (p.claudeApiKey) claudeApiKey = p.claudeApiKey;
-      if (p.claudeModel) claudeModel = p.claudeModel;
-      if (p.aiModel) aiModel = p.aiModel;
-      if (!aiBackend) {
-        if (p.claudeApiKey) { aiBackend = "claude"; await savePrefs({ aiBackend: "claude" }); }
-        else if (p.geminiApiKey) { aiBackend = "gemini"; await savePrefs({ aiBackend: "gemini" }); }
-        else if (ollamaReady && p.aiModel) { aiBackend = "ollama"; await savePrefs({ aiBackend: "ollama" }); }
-      }
     }}
   />
 
@@ -506,31 +463,6 @@
     <header class="relative h-10 flex items-center justify-between px-2 border-b border-zinc-800 shrink-0">
       <MenuBar menus={appMenus} />
 
-      <!-- AI-backend-toggle -->
-      <div class="absolute left-1/2 -translate-x-1/2">
-      {#if ollamaReady || geminiApiKey || claudeApiKey}
-        <div class="flex rounded-md overflow-hidden border border-zinc-700 text-xs">
-          {#if claudeApiKey}
-            <button
-              onclick={() => setAiBackend("claude")}
-              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'claude' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            >Claude</button>
-          {/if}
-          {#if geminiApiKey}
-            <button
-              onclick={() => setAiBackend("gemini")}
-              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'gemini' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            >Gemini</button>
-          {/if}
-          {#if ollamaReady && aiModel}
-            <button
-              onclick={() => setAiBackend("ollama")}
-              class="px-3 py-1 transition-colors cursor-pointer {aiBackend === 'ollama' ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            >Llama</button>
-          {/if}
-        </div>
-      {/if}
-      </div>
 
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {#if isOnline === true && apiKey}
@@ -633,13 +565,6 @@
 
     <SearchArea
       {dbPath}
-      {ollamaReady}
-      {aiBackend}
-      {aiModel}
-      {geminiApiKey}
-      {geminiModel}
-      {claudeApiKey}
-      {claudeModel}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       bind:actionMenuItems
       bind:mailMenuItems

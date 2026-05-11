@@ -10,26 +10,18 @@
   import ExportPanel from "./ExportPanel.svelte";
   import NyckeltaPanel from "./NyckeltaPanel.svelte";
   import KartaPanel from "./KartaPanel.svelte";
-  import { loadPrefs } from "$lib/store";
   import { debug } from "$lib/debug.svelte";
-  import { buildPrompt, buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
+  import { buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
   import type { MenuItem } from "./MenuBar.svelte";
 
   type Props = {
     dbPath: string;
-    ollamaReady: boolean;
-    aiBackend: string;
-    aiModel: string;
-    geminiApiKey: string;
-    geminiModel: string;
-    claudeApiKey: string;
-    claudeModel: string;
     onOpenAiSettings: () => void;
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
   };
-  let { dbPath, ollamaReady, aiBackend, aiModel, geminiApiKey, geminiModel, claudeApiKey, claudeModel, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -41,7 +33,7 @@
   let sqlQuery = $state("");
 
   // AI
-  const aiReady = $derived((ollamaReady && !!aiModel) || !!geminiApiKey || !!claudeApiKey);
+  const aiReady = true;
   let aiQuery = $state("");
   let aiRunning = $state(false);
   let aiError = $state("");
@@ -455,23 +447,9 @@
   }
 
   async function callAi(prompt: string): Promise<string> {
-    if (!aiBackend) throw new Error("Ingen AI-backend vald. Gå till Inställningar → AI-assistent och välj Claude, Gemini eller Ollama.");
-    const backendLabel = aiBackend === "gemini" ? `Gemini (${geminiModel})` : aiBackend === "claude" ? `Claude (${claudeModel})` : "Ollama";
-    if (debug.ai) debug.log(`→ ${backendLabel}\n${prompt}`);
-    let result: string;
-    if (aiBackend === "gemini") {
-      if (!geminiApiKey) throw new Error("Ingen Gemini API-nyckel. Gå till Inställningar → AI-assistent.");
-      result = await tauri<string>("query_gemini", { apiKey: geminiApiKey, model: geminiModel, prompt });
-    } else if (aiBackend === "claude") {
-      if (!claudeApiKey) throw new Error("Ingen Claude API-nyckel. Gå till Inställningar → AI-assistent.");
-      result = await tauri<string>("query_claude", { apiKey: claudeApiKey, model: claudeModel, prompt });
-    } else {
-      const prefs = await loadPrefs();
-      const model = prefs.aiModel;
-      if (!model) throw new Error("Ingen Ollama-modell vald. Gå till Inställningar → AI-assistent.");
-      result = await tauri<string>("query_ollama", { model, prompt });
-    }
-    if (debug.ai) debug.log(`← ${backendLabel}\n${result}`);
+    if (debug.ai) debug.log(`→ Claude\n${prompt}`);
+    const result = await tauri<string>("query_claude", { apiKey: "", model: "", prompt });
+    if (debug.ai) debug.log(`← Claude\n${result}`);
     return result;
   }
 
@@ -488,7 +466,7 @@
         aiInfo = raw.trim();
         aiInfoSql = extractSqlFromText(aiInfo);
       } else {
-        const promptFn = (aiBackend === "claude" || aiBackend === "gemini") ? buildSmartPrompt : buildPrompt;
+        const promptFn = buildSmartPrompt;
         const raw = await callAi(promptFn(schema, aiQuery, aiExpl));
         const rawTrimmed = raw.trim();
         let candidate = rawTrimmed.replace(/^```sql\n?/i, "").replace(/```$/, "").trim();

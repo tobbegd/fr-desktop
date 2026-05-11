@@ -4,7 +4,6 @@ use lettre::{
     Tokio1Executor,
     transport::smtp::authentication::Credentials,
 };
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -413,167 +412,14 @@ async fn save_file_binary(filename: String, data: String) -> Result<(), String> 
         .map_err(|e| e.to_string())
 }
 
-// ---- Ollama ----
+// ---- Claude-proxy ----
 
-const OLLAMA_BASE: &str = "http://localhost:11434";
-
-#[tauri::command]
-async fn check_ollama() -> bool {
-    reqwest::Client::new()
-        .get(OLLAMA_BASE)
-        .timeout(std::time::Duration::from_secs(2))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
-}
-
-#[derive(Deserialize)]
-struct OllamaTagsResponse {
-    models: Vec<OllamaModelInfo>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct OllamaModelInfo {
-    name: String,
-    size: u64,
-}
-
-#[tauri::command]
-async fn list_ollama_models() -> Result<Vec<OllamaModelInfo>, String> {
-    let resp = reqwest::Client::new()
-        .get(format!("{}/api/tags", OLLAMA_BASE))
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let data: OllamaTagsResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(data.models)
-}
-
-#[derive(Serialize, Clone)]
-struct PullProgress {
-    status: String,
-    completed: Option<u64>,
-    total: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct PullLine {
-    status: String,
-    completed: Option<u64>,
-    total: Option<u64>,
-}
-
-#[tauri::command]
-async fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
-    let resp = reqwest::Client::new()
-        .post(format!("{}/api/pull", OLLAMA_BASE))
-        .json(&serde_json::json!({ "name": model }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut stream = resp.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(pos) = buffer.find('\n') {
-            let line = buffer[..pos].trim().to_string();
-            buffer = buffer[pos + 1..].to_string();
-            if line.is_empty() { continue; }
-            if let Ok(parsed) = serde_json::from_str::<PullLine>(&line) {
-                let done = parsed.status == "success";
-                let _ = app.emit("ollama-pull-progress", PullProgress {
-                    status: parsed.status,
-                    completed: parsed.completed,
-                    total: parsed.total,
-                });
-                if done { return Ok(()); }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct OllamaGenerateRequest {
-    model: String,
-    prompt: String,
-    stream: bool,
-}
-
-#[derive(Deserialize)]
-struct OllamaGenerateResponse {
-    response: String,
-}
+const AI_PROXY_URL: &str = "https://fr-ai-proxy.tubbs.workers.dev";
+const AI_PROXY_SECRET: &str = "MiffPiffRufsig23Katt";
 
 #[tauri::command]
 fn get_os() -> &'static str {
     std::env::consts::OS
-}
-
-#[tauri::command]
-async fn install_ollama(app: AppHandle) -> Result<(), String> {
-    match std::env::consts::OS {
-        "linux" => {
-            let wrapper = "#!/bin/bash\ncurl -fsSL https://ollama.com/install.sh | sh\nsudo mkdir -p /usr/share/ollama\nsudo chown ollama:ollama /usr/share/ollama\nsudo systemctl restart ollama\necho\necho 'Ollama installerat. Tryck Enter för att stänga.'\nread\n";
-            let wrapper_path = "/tmp/ollama_install_run.sh";
-            std::fs::write(wrapper_path, wrapper).map_err(|e| e.to_string())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(wrapper_path, std::fs::Permissions::from_mode(0o755));
-            }
-            let terminals: &[(&str, &[&str])] = &[
-                ("x-terminal-emulator", &["-e", wrapper_path]),
-                ("gnome-terminal",      &["--", wrapper_path]),
-                ("konsole",             &["-e", wrapper_path]),
-                ("xterm",               &["-e", wrapper_path]),
-            ];
-            for (term, args) in terminals {
-                if std::process::Command::new(term).args(*args).spawn().is_ok() {
-                    let _ = app.emit("ollama-install-status", "terminal-opened");
-                    return Ok(());
-                }
-            }
-            Err("Ingen terminal hittades".to_string())
-        }
-        "windows" => {
-            let _ = app.emit("ollama-install-status", "Laddar ner installerare...");
-            let bytes = reqwest::get("https://ollama.com/download/OllamaSetup.exe")
-                .await
-                .map_err(|e| format!("Kunde inte ladda ner: {e}"))?
-                .bytes()
-                .await
-                .map_err(|e| e.to_string())?;
-            let temp_path = std::env::temp_dir().join("OllamaSetup.exe");
-            std::fs::write(&temp_path, &bytes).map_err(|e| e.to_string())?;
-            let _ = app.emit("ollama-install-status", "Startar installerare...");
-            std::process::Command::new(&temp_path)
-                .spawn()
-                .map_err(|e| format!("Kunde inte starta installerare: {e}"))?;
-            Ok(())
-        }
-        _ => Err("unsupported".to_string()),
-    }
-}
-
-#[tauri::command]
-async fn delete_ollama_model(model: String) -> Result<(), String> {
-    let resp = reqwest::Client::new()
-        .delete(format!("{}/api/delete", OLLAMA_BASE))
-        .json(&serde_json::json!({ "name": model }))
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("Kunde inte ta bort modell: {}", resp.status()));
-    }
-    Ok(())
 }
 
 #[tauri::command]
@@ -1031,87 +877,11 @@ async fn delete_utskick(app: AppHandle, id: i64) -> Result<(), String> {
     }).await.map_err(|e| e.to_string())?
 }
 
-#[derive(Deserialize)]
-struct GeminiPart { text: String }
-#[derive(Deserialize)]
-struct GeminiContent { parts: Vec<GeminiPart> }
-#[derive(Deserialize)]
-struct GeminiCandidate { content: GeminiContent }
-#[derive(Deserialize)]
-struct GeminiResponse { candidates: Vec<GeminiCandidate> }
-
-#[derive(Deserialize, Serialize)]
-struct GeminiModelInfo {
-    name: String,
-    #[serde(rename = "displayName")]
-    display_name: String,
-    #[serde(rename = "supportedGenerationMethods", default)]
-    supported_generation_methods: Vec<String>,
-}
-#[derive(Deserialize)]
-struct GeminiModelsResponse { models: Vec<GeminiModelInfo> }
-
 #[tauri::command]
-async fn list_gemini_models(api_key: String) -> Result<Vec<GeminiModelInfo>, String> {
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-        api_key
-    );
+async fn list_claude_models(_api_key: String) -> Result<Vec<serde_json::Value>, String> {
     let resp = reqwest::Client::new()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Gemini-fel: {}", body));
-    }
-
-    let data: GeminiModelsResponse = resp.json().await.map_err(|e| e.to_string())?;
-    let models = data.models.into_iter()
-        .filter(|m| m.supported_generation_methods.iter().any(|s| s == "generateContent"))
-        .map(|mut m| { m.name = m.name.trim_start_matches("models/").to_string(); m })
-        .collect();
-    Ok(models)
-}
-
-#[tauri::command]
-async fn query_gemini(api_key: String, model: String, prompt: String) -> Result<String, String> {
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
-    let resp = reqwest::Client::new()
-        .post(&url)
-        .json(&serde_json::json!({
-            "contents": [{"parts": [{"text": prompt}]}]
-        }))
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Gemini-fel {}: {}", status, body));
-    }
-
-    let data: GeminiResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(data.candidates.into_iter().next()
-        .and_then(|c| c.content.parts.into_iter().next())
-        .map(|p| p.text)
-        .unwrap_or_default())
-}
-
-#[tauri::command]
-async fn list_claude_models(api_key: String) -> Result<Vec<serde_json::Value>, String> {
-    let resp = reqwest::Client::new()
-        .get("https://api.anthropic.com/v1/models")
-        .header("x-api-key", api_key.trim())
-        .header("anthropic-version", "2023-06-01")
+        .get(format!("{}/v1/models", AI_PROXY_URL))
+        .header("x-app-secret", AI_PROXY_SECRET)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -1125,14 +895,11 @@ async fn list_claude_models(api_key: String) -> Result<Vec<serde_json::Value>, S
 }
 
 #[tauri::command]
-async fn query_claude(api_key: String, model: String, prompt: String) -> Result<String, String> {
-    let key = api_key.trim().to_string();
+async fn query_claude(_api_key: String, _model: String, prompt: String) -> Result<String, String> {
     let resp = reqwest::Client::new()
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &key)
-        .header("anthropic-version", "2023-06-01")
+        .post(format!("{}/v1/messages", AI_PROXY_URL))
+        .header("x-app-secret", AI_PROXY_SECRET)
         .json(&serde_json::json!({
-            "model": model,
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": prompt}],
         }))
@@ -1152,24 +919,6 @@ async fn query_claude(api_key: String, model: String, prompt: String) -> Result<
         .as_str()
         .unwrap_or_default()
         .to_string())
-}
-
-#[tauri::command]
-async fn query_ollama(model: String, prompt: String) -> Result<String, String> {
-    let resp = reqwest::Client::new()
-        .post(format!("{}/api/generate", OLLAMA_BASE))
-        .json(&OllamaGenerateRequest { model, prompt, stream: false })
-        .timeout(std::time::Duration::from_secs(120))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Ollama-fel: {}", resp.status()));
-    }
-
-    let data: OllamaGenerateResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(data.response)
 }
 
 #[tauri::command]
@@ -1334,16 +1083,8 @@ pub fn run() {
             save_file,
             save_file_binary,
             get_os,
-            check_ollama,
-            list_ollama_models,
-            pull_ollama_model,
-            delete_ollama_model,
-            query_ollama,
-            query_gemini,
             query_claude,
             list_claude_models,
-            list_gemini_models,
-            install_ollama,
             quit,
             send_test_email,
             send_utskick_test,

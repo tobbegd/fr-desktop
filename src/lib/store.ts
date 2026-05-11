@@ -18,10 +18,6 @@ export interface Prefs {
   dbPath: string;
   dbExportDate: string;
   offlineLogins: number;
-  aiModel: string;
-  geminiApiKey: string;
-  geminiModel: string;
-  claudeApiKey: string;
   claudeModel: string;
   aiBackend: string;
   debugConsole: boolean;
@@ -48,12 +44,8 @@ const defaults: Prefs = {
   dbPath: "",
   dbExportDate: "",
   offlineLogins: 0,
-  aiModel: "",
-  geminiApiKey: "",
-  geminiModel: "gemini-2.0-flash",
-  claudeApiKey: "",
   claudeModel: "claude-haiku-4-5",
-  aiBackend: "",
+  aiBackend: "claude",
   debugConsole: false,
   debugAi: false,
   smtpHost: "",
