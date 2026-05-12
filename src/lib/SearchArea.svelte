@@ -41,7 +41,9 @@
   let aiInfo = $state("");
   let aiInfoSql = $state("");
   let aiMode = $state<"sql" | "chat">("sql");
-  let aiInput = $state<HTMLInputElement | null>(null);
+  let aiInput = $state<HTMLTextAreaElement | null>(null);
+  let windowMouseY = $state(9999);
+
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
   function switchMode(mode: "sql" | "chat") {
@@ -88,7 +90,77 @@
     await historyStore?.save();
   }
 
-  $effect(() => { loadHistory(); });
+  $effect(() => { loadHistory(); loadSnippetStore(); });
+
+  // Quick-save
+  type SnippetTab = { id: string; name: string; snippets: { id: string; name: string; sql: string }[] };
+  let snippetStore: Store | null = null;
+  let quickSaveTabs = $state<{ id: string; name: string }[]>([]);
+  let quickSaveGroupId = $state<string | null>(null);
+  let quickSaveOpen = $state(false);
+  let quickSaveName = $state("");
+  let quickSaveCreatingNew = $state(false);
+  let quickSaveNewGroupName = $state("");
+  let quickSaveGroupFilter = $state("");
+  let quickSaveBusy = $state(false);
+  let quickSaveDone = $state(false);
+  let quickSaveActive = $state(false);
+  let quickSaveKey = $state(0);
+  let quickSaveAnchorEl = $state<HTMLElement | null>(null);
+  let quickSavePopoverPos = $state<{ x: number; y: number } | null>(null);
+
+  async function loadSnippetStore() {
+    snippetStore = await Store.load("snippets.json");
+    await refreshSnippetTabs();
+    const lastId = await snippetStore.get<string>("lastUsedGroupId");
+    if (lastId && quickSaveTabs.some(t => t.id === lastId)) quickSaveGroupId = lastId;
+    else if (quickSaveTabs.length > 0) quickSaveGroupId = quickSaveTabs[0].id;
+  }
+
+  async function refreshSnippetTabs() {
+    const tabs = await snippetStore?.get<SnippetTab[]>("tabs") ?? [];
+    quickSaveTabs = tabs.map(t => ({ id: t.id, name: t.name }));
+  }
+
+  function openQuickSave() {
+    quickSaveName = aiQuery.trim().split('\n')[0];
+    quickSaveCreatingNew = false;
+    quickSaveNewGroupName = "";
+    quickSaveGroupFilter = "";
+    quickSaveDone = false;
+    refreshSnippetTabs();
+    if (quickSaveAnchorEl) {
+      const r = quickSaveAnchorEl.getBoundingClientRect();
+      quickSavePopoverPos = { x: r.left, y: r.bottom + 8 };
+    }
+    quickSaveOpen = true;
+  }
+
+  async function doQuickSave() {
+    if (!quickSaveName.trim() || !sqlQuery.trim() || !snippetStore) return;
+    if (!quickSaveGroupId && !quickSaveCreatingNew) return;
+    quickSaveBusy = true;
+    const allTabs = await snippetStore.get<SnippetTab[]>("tabs") ?? [];
+    let targetId = quickSaveGroupId;
+    if (quickSaveCreatingNew) {
+      const newName = quickSaveNewGroupName.trim() || quickSaveName.trim();
+      const newTab: SnippetTab = { id: crypto.randomUUID(), name: newName, snippets: [] };
+      allTabs.push(newTab);
+      targetId = newTab.id;
+    }
+    const snippet = { id: crypto.randomUUID(), name: quickSaveName.trim(), sql: sqlQuery.trim() };
+    const updatedTabs = allTabs.map(t =>
+      t.id === targetId ? { ...t, snippets: [...t.snippets, snippet] } : t
+    );
+    await snippetStore.set("tabs", updatedTabs);
+    await snippetStore.set("lastUsedGroupId", targetId);
+    await snippetStore.save();
+    quickSaveGroupId = targetId;
+    quickSaveTabs = updatedTabs.map(t => ({ id: t.id, name: t.name }));
+    quickSaveBusy = false;
+    quickSaveDone = true;
+    setTimeout(() => { quickSaveOpen = false; quickSaveDone = false; quickSaveActive = false; }, 700);
+  };
   function hscroll(node: HTMLElement) {
     function onWheel(e: WheelEvent) {
       if (!e.shiftKey) return;
@@ -102,6 +174,7 @@
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
+  const searchVisible = $derived(!result || windowMouseY < 150);
   let pageSize = $state(200);
   let currentPage = $state(0);
 
@@ -481,6 +554,8 @@
         } else {
           sqlQuery = cleaned;
           runQuery(true);
+          quickSaveActive = true;
+          quickSaveKey++;
         }
       }
     } catch (e) {
@@ -627,49 +702,91 @@
 
 </script>
 
+<svelte:window onmousemove={(e) => { windowMouseY = e.clientY; }} />
+
 <!-- SearchArea fyller återstående höjd i föräldern -->
 <div class="flex-1 flex flex-col min-h-0">
 
-  <!-- Sök-input (fast höjd) -->
-  <div class="shrink-0 border-b border-zinc-800">
+  <!-- Sök-input (döljs när result finns och musen är nere) -->
+  <div class="shrink-0" style="display:grid; grid-template-rows:{searchVisible ? '1fr' : '0fr'}; transition:grid-template-rows 0.3s ease">
+    <div class="overflow-hidden">
     <!-- AI-fält -->
-    <div class="px-3 pt-2 pb-2 border-b border-zinc-800/60">
+    <div class="px-3 pt-4 pb-5">
       <div class="flex items-center gap-2">
-        <span class="text-xs text-zinc-600 shrink-0">AI</span>
-        <div class="flex rounded-md overflow-hidden border border-zinc-700 shrink-0 text-xs">
-          <button
-            class="px-2 py-1 transition-colors cursor-pointer {aiMode === 'sql' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            onclick={() => switchMode('sql')}
-          >SQL</button>
-          <button
-            class="px-2 py-1 transition-colors cursor-pointer {aiMode === 'chat' ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}"
-            onclick={() => switchMode('chat')}
-          >Chat</button>
+        <!-- Vänster: spacer för centrering -->
+        <div class="flex-1"></div>
+
+        <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->
+        <div class="relative w-[44%]">
+          <!-- Mode-knappar centrerade, lätt nedsjunkna uppifrån -->
+          <div class="absolute -top-4 left-1/2 -translate-x-1/2 z-10 flex gap-1.5">
+            <button
+              onclick={() => switchMode('sql')}
+              class="px-3 py-1 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
+                {aiMode === 'sql'
+                  ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
+                  : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
+            >SQL</button>
+            <button
+              onclick={() => switchMode('chat')}
+              class="px-3 py-1 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
+                {aiMode === 'chat'
+                  ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
+                  : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
+            >Chat</button>
+          </div>
+          <div class="ai-glow-wrapper" class:ai-thinking={aiRunning}>
+            <textarea
+              bind:this={aiInput}
+              bind:value={aiQuery}
+              placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
+              class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px]"
+              style="height: 64px"
+              readonly={!aiReady || aiRunning}
+              onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
+              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); } }}
+              oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; }}
+            ></textarea>
+          </div>
+          <!-- Bookmark: center=snippets, vänster=snabbspara (animeras hit efter AI-sökning) -->
+          {#if !showSqlEditor}
+            <div class="absolute top-full left-0 right-0 z-10" style="height:0; overflow:visible;">
+              {#if quickSaveActive}
+                {#key quickSaveKey}
+                  <button
+                    bind:this={quickSaveAnchorEl}
+                    onclick={openQuickSave}
+                    title="Spara sökning"
+                    class="absolute cursor-pointer select-none transition-colors save-slide-anim
+                      {quickSaveDone ? 'text-green-400' : 'text-zinc-500 hover:text-white'}"
+                    style="top:0; left:8px; transform:translateY(-50%);"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                  </button>
+                {/key}
+              {:else}
+                <button
+                  onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
+                  title={showSnippets ? "Dölj snippets" : "Visa snippets"}
+                  class="absolute cursor-pointer select-none transition-colors
+                    {showSnippets ? 'text-zinc-400 hover:text-zinc-300' : blinkSnippet ? 'text-orange-400' : 'text-zinc-600 hover:text-zinc-400'}"
+                  style="top:0; left:50%; transform:translateX(-50%) translateY(-50%);"
+                >
+                  {#if showSnippets}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                  {:else}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                  {/if}
+                </button>
+              {/if}
+            </div>
+          {/if}
         </div>
-        <div class="ai-glow-wrapper flex-1" class:ai-thinking={aiRunning}>
-          <input
-            type="text"
-            bind:this={aiInput}
-            bind:value={aiQuery}
-            placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
-            style="font-size: var(--table-font-size, 12px)"
-            class="ai-glow-input w-full px-3 py-1.5 placeholder-zinc-600 focus:outline-none
-              {aiReady ? 'text-zinc-200' : 'text-zinc-500 cursor-pointer'}"
-            readonly={!aiReady || aiRunning}
-            onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
-            onkeydown={(e) => { if (e.key === "Enter" && aiReady && !aiRunning) runAiQuery(); }}
-            oninput={(e) => { if (!(e.target as HTMLInputElement).value) aiInfo = ""; }}
-          />
-        </div>
-        {#if !showSqlEditor}
-          <button
-            onclick={() => { showSnippets = !showSnippets; showHistory = false; blinkSnippet = false; }}
-            title={showSnippets ? "Dölj snippets" : "Visa snippets"}
-            class="px-3 py-1.5 text-xs rounded-md border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none shrink-0
-              {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
-          >{showSnippets ? "▲" : "▼"}</button>
-        {/if}
+
+        <!-- Höger: spacer -->
+        <div class="flex-1"></div>
       </div>
+
       {#if !showSqlEditor && showSnippets}
         <div class="mt-2">
           <SnippetPanel
@@ -705,7 +822,7 @@
 
     <!-- SQL-fält (visas via Fönster-meny) -->
     {#if showSqlEditor}
-    <div class="px-3 pt-2 pb-3 flex flex-col gap-2">
+    <div class="px-3 pt-2 pb-3 flex flex-col gap-2 border-t border-zinc-800">
       <div class="flex items-center gap-2">
         <span class="text-xs text-zinc-600 shrink-0">SQL</span>
         <div class="flex-1"></div>
@@ -785,7 +902,9 @@
       {/if}
     </div>
     {/if}
+    </div>
   </div>
+
 
   <!-- Resultat -->
   {#if error}
@@ -948,6 +1067,72 @@
     </div>
   {/if}
 </div>
+
+{#if !searchVisible && aiQuery.trim()}
+  <div class="fixed z-30 left-1/2" style="top:40px; transform:translate(-50%,-50%);">
+    <span class="query-preview px-3 py-0.5 bg-zinc-950 rounded-full select-none pointer-events-none">
+      · {aiQuery.trim().slice(0, 30)}{aiQuery.trim().length > 30 ? '…' : ''} ·
+    </span>
+  </div>
+{/if}
+
+{#if quickSaveOpen && quickSavePopoverPos}
+  <div class="fixed inset-0 z-40" onclick={() => quickSaveOpen = false}></div>
+  <div
+    class="fixed z-50 w-64 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl p-3"
+    style="left:{quickSavePopoverPos.x}px; top:{quickSavePopoverPos.y}px;"
+  >
+    {#if quickSaveDone}
+      <p class="text-sm text-green-400 text-center py-2">Sparat!</p>
+    {:else}
+      <h3 class="text-xs font-medium text-zinc-400 mb-2">Spara sökning</h3>
+      <input
+        bind:value={quickSaveName}
+        placeholder="Namn..."
+        autofocus
+        class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 mb-2"
+        onkeydown={(e) => { if (e.key === 'Enter') doQuickSave(); if (e.key === 'Escape') quickSaveOpen = false; }}
+      />
+      {#if quickSaveTabs.length > 5}
+        <input
+          bind:value={quickSaveGroupFilter}
+          placeholder="Filtrera grupper..."
+          class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 mb-1.5"
+        />
+      {/if}
+      <div class="max-h-32 overflow-y-auto mb-2 flex flex-col gap-0.5">
+        {#each quickSaveTabs.filter(t => !quickSaveGroupFilter || t.name.toLowerCase().includes(quickSaveGroupFilter.toLowerCase())) as tab}
+          <button
+            onclick={() => { quickSaveGroupId = tab.id; quickSaveCreatingNew = false; }}
+            class="text-left px-2 py-1 rounded text-xs transition-colors cursor-pointer
+              {quickSaveGroupId === tab.id && !quickSaveCreatingNew ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
+          >{tab.name}</button>
+        {/each}
+        <button
+          onclick={() => { quickSaveCreatingNew = true; quickSaveGroupId = null; }}
+          class="text-left px-2 py-1 rounded text-xs transition-colors cursor-pointer
+            {quickSaveCreatingNew ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
+        >+ Ny grupp</button>
+      </div>
+      {#if quickSaveCreatingNew}
+        <input
+          bind:value={quickSaveNewGroupName}
+          placeholder="Gruppnamn (tomt = samma som snippet)..."
+          class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 mb-2"
+          onkeydown={(e) => { if (e.key === 'Enter') doQuickSave(); if (e.key === 'Escape') quickSaveOpen = false; }}
+        />
+      {/if}
+      <div class="flex justify-end gap-2">
+        <button onclick={() => quickSaveOpen = false} class="px-2 py-1 text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors">Avbryt</button>
+        <button
+          onclick={doQuickSave}
+          disabled={quickSaveBusy || !quickSaveName.trim() || (!quickSaveGroupId && !quickSaveCreatingNew)}
+          class="px-3 py-1 text-xs bg-white text-zinc-900 font-medium rounded hover:bg-zinc-200 cursor-pointer disabled:opacity-50 transition-colors"
+        >{quickSaveBusy ? "..." : "Spara"}</button>
+      </div>
+    {/if}
+  </div>
+{/if}
 
 {#if kartaPanel}
   <KartaPanel bolag={kartaPanel} onclose={() => kartaPanel = null} />
@@ -1136,6 +1321,28 @@
 {/if}
 
 <style>
+  @keyframes query-preview-scroll {
+    0%, 100% { background-position: 0% center; }
+    50%       { background-position: 100% center; }
+  }
+  @keyframes query-preview-spacing {
+    0%, 100% { letter-spacing: 0.08em; }
+    50%       { letter-spacing: 0.26em; }
+  }
+  .query-preview {
+    font-size: 11px;
+    text-transform: uppercase;
+    background: linear-gradient(90deg, #ff3366, #ffcc00, #00ff88, #ff3366);
+    background-size: 300% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    opacity: 0.45;
+    animation:
+      query-preview-scroll 6s ease-in-out infinite,
+      query-preview-spacing 4s ease-in-out infinite;
+  }
+
   @keyframes ai-spin {
     to { transform: rotate(360deg); }
   }
@@ -1183,6 +1390,20 @@
     background: rgb(24 24 27); /* zinc-900 */
     border-radius: 4px;
     border: none;
+    transition: height 0.3s ease;
+  }
+  @keyframes save-slide-in {
+    from { opacity: 0; transform: translateY(-50%) translateX(44px); }
+    to   { opacity: 1; transform: translateY(-50%); }
+  }
+  @keyframes save-blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.7; color: rgb(110 231 183); }
+  }
+  .save-slide-anim {
+    animation:
+      save-slide-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.18s both,
+      save-blink 0.28s ease 0.76s 2;
   }
 </style>
 
