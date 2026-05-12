@@ -333,6 +333,7 @@
   let actionMenuItems = $state<MenuItem[]>([]);
   let mailMenuItems = $state<MenuItem[]>([]);
   let kartaMenuItems = $state<MenuItem[]>([]);
+  let showSqlEditor = $state(false);
 
   const appMenus: MenuDef[] = $derived([
     {
@@ -357,6 +358,12 @@
         { label: "Öppna mailutskick", action: () => { prevView = view; view = "mail"; } },
         { separator: true },
         ...mailMenuItems,
+      ],
+    },
+    {
+      label: "Fönster",
+      items: [
+        { label: showSqlEditor ? "Dölj SQL-editor" : "Visa SQL-editor", action: () => { showSqlEditor = !showSqlEditor; } },
       ],
     },
   ]);
@@ -566,6 +573,7 @@
     <SearchArea
       {dbPath}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
+      bind:showSqlEditor
       bind:actionMenuItems
       bind:mailMenuItems
       bind:kartaMenuItems

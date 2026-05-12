@@ -17,11 +17,12 @@
   type Props = {
     dbPath: string;
     onOpenAiSettings: () => void;
+    showSqlEditor?: boolean;
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
   };
-  let { dbPath, onOpenAiSettings, actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, onOpenAiSettings, showSqlEditor = $bindable(false), actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -51,7 +52,6 @@
     aiInfoSql = "";
     setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
   }
-  let aiAutoExec = $state(true);
   let schema = $state<Record<string, string[]>>({});
   let aiExpl = $state<AiExpl>({});
 
@@ -480,7 +480,7 @@
           aiError = "AI försökte ändra databasen — det är inte tillåtet. Försök igen.";
         } else {
           sqlQuery = cleaned;
-          if (aiAutoExec) runQuery(true);
+          runQuery(true);
         }
       }
     } catch (e) {
@@ -646,46 +646,38 @@
             onclick={() => switchMode('chat')}
           >Chat</button>
         </div>
-        <input
-          type="text"
-          bind:this={aiInput}
-          bind:value={aiQuery}
-          placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
-          style="font-size: var(--table-font-size, 12px)"
-          class="flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 placeholder-zinc-600 focus:outline-none transition-colors
-            {aiReady ? 'border-zinc-700 text-zinc-200 focus:border-zinc-500' : 'border-zinc-800 text-zinc-500 cursor-pointer'}"
-          readonly={!aiReady}
-          onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
-          onkeydown={(e) => { if (e.key === "Enter" && aiReady) runAiQuery(); }}
-          oninput={(e) => { if (!(e.target as HTMLInputElement).value) aiInfo = ""; }}
-        />
-        {#if aiReady}
+        <div class="ai-glow-wrapper flex-1" class:ai-thinking={aiRunning}>
+          <input
+            type="text"
+            bind:this={aiInput}
+            bind:value={aiQuery}
+            placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
+            style="font-size: var(--table-font-size, 12px)"
+            class="ai-glow-input w-full px-3 py-1.5 placeholder-zinc-600 focus:outline-none
+              {aiReady ? 'text-zinc-200' : 'text-zinc-500 cursor-pointer'}"
+            readonly={!aiReady || aiRunning}
+            onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
+            onkeydown={(e) => { if (e.key === "Enter" && aiReady && !aiRunning) runAiQuery(); }}
+            oninput={(e) => { if (!(e.target as HTMLInputElement).value) aiInfo = ""; }}
+          />
+        </div>
+        {#if !showSqlEditor}
           <button
-            class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md transition-colors cursor-pointer disabled:opacity-40 shrink-0"
-            disabled={!aiQuery.trim() || aiRunning || !dbPath}
-            onclick={runAiQuery}
-          >
-            {#if aiRunning}
-              <span class="flex items-center gap-1.5">
-                <span class="flex gap-1">
-                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:0ms]" style="background:#ff3366;filter:drop-shadow(0 0 5px #ff3366) drop-shadow(0 0 10px #ff3366)"></span>
-                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:150ms]" style="background:#ffcc00;filter:drop-shadow(0 0 5px #ffcc00) drop-shadow(0 0 10px #ffcc00)"></span>
-                  <span class="w-2 h-2 rounded-full animate-bounce [animation-delay:300ms]" style="background:#00ff88;filter:drop-shadow(0 0 5px #00ff88) drop-shadow(0 0 10px #00ff88)"></span>
-                </span>
-                Tänker
-              </span>
-            {:else}
-              Generera
-            {/if}
-          </button>
-          {#if aiMode === 'sql'}
-          <label class="flex items-center gap-1.5 cursor-pointer shrink-0 select-none">
-            <input type="checkbox" bind:checked={aiAutoExec} class="accent-zinc-400 cursor-pointer" />
-            <span class="text-xs text-zinc-500">auto</span>
-          </label>
-          {/if}
+            onclick={() => { showSnippets = !showSnippets; showHistory = false; blinkSnippet = false; }}
+            title={showSnippets ? "Dölj snippets" : "Visa snippets"}
+            class="px-3 py-1.5 text-xs rounded-md border bg-zinc-900 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer select-none shrink-0
+              {blinkSnippet ? 'border-orange-500 snippet-blink' : 'border-zinc-700 hover:border-zinc-500'}"
+          >{showSnippets ? "▲" : "▼"}</button>
         {/if}
       </div>
+      {#if !showSqlEditor && showSnippets}
+        <div class="mt-2">
+          <SnippetPanel
+            currentSql={sqlQuery}
+            onselect={(sql) => { sqlQuery = sql; showSnippets = false; runQuery(true); }}
+          />
+        </div>
+      {/if}
       {#if aiError}
         <p class="text-xs text-red-400 mt-1">{aiError}</p>
       {/if}
@@ -711,7 +703,8 @@
       {/if}
     </div>
 
-    <!-- SQL-fält (alltid synligt) -->
+    <!-- SQL-fält (visas via Fönster-meny) -->
+    {#if showSqlEditor}
     <div class="px-3 pt-2 pb-3 flex flex-col gap-2">
       <div class="flex items-center gap-2">
         <span class="text-xs text-zinc-600 shrink-0">SQL</span>
@@ -791,6 +784,7 @@
         <p class="text-xs text-zinc-600">Ingen databas nedladdad ännu.</p>
       {/if}
     </div>
+    {/if}
   </div>
 
   <!-- Resultat -->
@@ -1140,4 +1134,55 @@
     </div>
   </div>
 {/if}
+
+<style>
+  @keyframes ai-spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes ai-pulse-shadow {
+    0%, 100% { box-shadow: 0 0 8px 1px rgba(255, 51, 102, 0.35), 0 0 20px 2px rgba(0, 255, 136, 0.15); }
+    50%       { box-shadow: 0 0 14px 2px rgba(255, 204, 0, 0.45), 0 0 30px 4px rgba(255, 51, 102, 0.2); }
+  }
+
+  .ai-glow-wrapper {
+    position: relative;
+    border-radius: 0.375rem;
+    padding: 1.5px;
+    background: rgb(63 63 70); /* zinc-700 */
+    overflow: hidden;
+  }
+  .ai-glow-wrapper:focus-within:not(.ai-thinking) {
+    background: rgb(113 113 122); /* zinc-500 */
+  }
+  .ai-glow-wrapper.ai-thinking {
+    background: transparent;
+    animation: ai-pulse-shadow 2s ease-in-out infinite;
+  }
+  .ai-glow-wrapper.ai-thinking::before {
+    content: '';
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    top: -50%;
+    left: -50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 10%,
+      #ff3366 25%,
+      #ffcc00 50%,
+      #00ff88 75%,
+      transparent 90%
+    );
+    animation: ai-spin 1.4s linear infinite;
+    z-index: 0;
+  }
+  .ai-glow-input {
+    position: relative;
+    z-index: 1;
+    display: block;
+    background: rgb(24 24 27); /* zinc-900 */
+    border-radius: 4px;
+    border: none;
+  }
+</style>
 
