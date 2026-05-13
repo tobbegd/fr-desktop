@@ -39,7 +39,7 @@ Regler:
 - sni_1/sni_2/sni_3 är NUMERISKA koder — sök aldrig bransch med dessa; använd sni_1_namn, sni_2_namn med ulow() LIKE
 - För verksamhetstyp: sök ALLTID i ALLA fem kolumner med OR: sni_1_namn, sni_2_namn, sni_3_namn, verksamhet, orgnamn — detta är OBLIGATORISKT, hoppa aldrig över verksamhet eller orgnamn även om sni-termerna verkar täcka frågan. Många bolag har branschen BARA i orgnamn eller verksamhet och saknar rätt SNI-kod
 - orgform är bolagsform (AB, HB...) — använd aldrig orgform för att söka bransch
-- Använd alltid LIMIT — om antal efterfrågas, använd det antalet, annars LIMIT 200
+- Använd alltid LIMIT — om antal efterfrågas, använd det antalet, annars LIMIT 200 (kan överskridas av användaren)
 - bolag har redan kolumnen webbadress — JOIN:a INTE webbplatser-tabellen för webbadress
 - bolag har redan kolumnerna nettoomsattning, arets_resultat, eget_kapital — JOIN:a INTE arsredovisningar för dessa, använd direkt från bolag
 - JOIN med arsredovisningar ENDAST om användaren specifikt ber om historik eller flera år — då: JOIN (SELECT orgnr, arets_resultat, rakenskapsar_slut FROM arsredovisningar GROUP BY orgnr HAVING rakenskapsar_slut = MAX(rakenskapsar_slut)) AS ar ON ar.orgnr = b.orgnr
@@ -101,7 +101,8 @@ Fråga: ${question}`;
 export function buildSmartPrompt(
   schema: Record<string, string[]>,
   question: string,
-  aiExpl: AiExpl = {}
+  aiExpl: AiExpl = {},
+  limit: number = 200
 ): string {
   const columnGuide = buildColumnGuide(schema, aiExpl);
   const schemaText = Object.entries(schema)
@@ -116,7 +117,7 @@ Viktiga regler:
 - Vardagsord som "verkstad", "butik", "byrå" söks i verksamhet och orgnamn — inte i sni-kolumner
 - "Med email/telefon/webbadress" = IS NOT NULL AND <> ''
 - "Med nyckeltal" = nettoomsattning IS NOT NULL
-- Använd alltid LIMIT — default 200
+- Använd alltid LIMIT — om antal efterfrågas använd det antalet, annars LIMIT ${limit}
 - Använd INTE tabellalias (FROM bolag b) om det inte finns en JOIN — referera direkt till kolumnnamn
 - Om alias används: ulow() omsluter kolumnen, INTE aliset — skriv ulow(b.postort), ALDRIG b.ulow(postort)
 
@@ -127,16 +128,16 @@ ${schemaText}
 
 Exempel:
 Fråga: taxi i karlstad
-SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND (ulow(sni_1_namn) LIKE '%taxi%' OR ulow(sni_2_namn) LIKE '%taxi%' OR ulow(sni_3_namn) LIKE '%taxi%' OR ulow(verksamhet) LIKE '%taxi%' OR ulow(orgnamn) LIKE '%taxi%') LIMIT 200;
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%karlstad%' AND (ulow(sni_1_namn) LIKE '%taxi%' OR ulow(sni_2_namn) LIKE '%taxi%' OR ulow(sni_3_namn) LIKE '%taxi%' OR ulow(verksamhet) LIKE '%taxi%' OR ulow(orgnamn) LIKE '%taxi%') LIMIT ${limit};
 
 Fråga: verkstad i stockholm med nyckeltal
-SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT 200;
+SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT ${limit};
 
 Fråga: restauranger i göteborg med email
-SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT 200;
+SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT ${limit};
 
 Fråga: it-konsulter i norrland med historik per år
-SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT 200;
+SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT ${limit};
 
 Fråga: ${question}
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { fly } from 'svelte/transition';
+
   export type MenuItem =
     | { label: string; action: () => void; shortcut?: string; disabled?: boolean }
     | { separator: true };
@@ -9,6 +11,8 @@
   let { menus }: Props = $props();
 
   let openIdx = $state<number | null>(null);
+  let hovered = $state(false);
+  const expanded = $derived(hovered || openIdx !== null);
   // torn: menuIdx → { x, y }
   let torn = $state<Map<number, { x: number; y: number }>>(new Map());
   let drag = $state<{ idx: number; ox: number; oy: number; mx: number; my: number } | null>(null);
@@ -55,10 +59,17 @@
 
 <svelte:window onmousemove={onMouseMove} onmouseup={onMouseUp} onclick={onWindowClick} />
 
-<div class="flex self-stretch" data-menubar>
+<div class="flex self-stretch" data-menubar
+  onmouseenter={() => hovered = true}
+  onmouseleave={() => hovered = false}
+>
   {#each menus as menu, idx}
     {@const isTorn = torn.has(idx)}
-    <div class="relative self-stretch flex">
+    {#if idx === 0 || expanded}
+    <div class="relative self-stretch flex"
+      in:fly={{ x: -8, duration: 130, delay: idx > 0 ? (idx - 1) * 45 : 0 }}
+      out:fly={{ x: -8, duration: 80, delay: idx > 0 ? (menus.length - 1 - idx) * 30 : 0 }}
+    >
       <button
         data-menu-trigger={idx}
         onclick={(e) => { toggle(idx); }}
@@ -93,6 +104,7 @@
         </div>
       {/if}
     </div>
+    {/if}
   {/each}
 </div>
 

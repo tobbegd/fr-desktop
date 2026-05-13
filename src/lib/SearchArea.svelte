@@ -43,6 +43,7 @@
   let aiInfoSql = $state("");
   let aiMode = $state<"sql" | "chat">("sql");
   let aiInput = $state<HTMLTextAreaElement | null>(null);
+  let limitInput = $state<HTMLInputElement | null>(null);
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
@@ -171,6 +172,8 @@
     return { destroy() { node.removeEventListener("wheel", onWheel); } };
   }
 
+  let aiLimit = $state(1000);
+
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
@@ -238,6 +241,8 @@
   });
 
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
+  const allSelected = $derived(filteredRows.length > 0 && filteredRows.every(({i}) => selectedRows.has(i)));
+  const someSelected = $derived(selectedRows.size > 0 && !allSelected);
 
   const filteredRows = $derived.by(() => {
     if (!result) return [];
@@ -548,7 +553,7 @@
         aiInfoSql = extractSqlFromText(aiInfo);
       } else {
         const promptFn = buildSmartPrompt;
-        const raw = await callAi(promptFn(schema, aiQuery, aiExpl));
+        const raw = await callAi(promptFn(schema, aiQuery, aiExpl, aiLimit));
         const rawTrimmed = raw.trim();
         let candidate = rawTrimmed.replace(/^```sql\n?/i, "").replace(/```$/, "").trim();
         if (!looksLikeSql(candidate)) {
@@ -753,7 +758,10 @@
               style="height: 64px"
               readonly={!aiReady || aiRunning}
               onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
-              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); } }}
+              onkeydown={(e) => {
+                if (e.key === "Tab") { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
+                if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); }
+              }}
               oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; }}
             ></textarea>
           </div>
@@ -792,8 +800,26 @@
           {/if}
         </div>
 
-        <!-- Höger: spacer -->
-        <div class="flex-1"></div>
+        <!-- Höger: limit-väljare (bara i sök-läge) -->
+        <div class="flex-1 flex items-start pt-1 pl-2">
+          {#if aiMode === 'sql'}
+          <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+            Limit
+            <input
+              type="text"
+              value={aiLimit}
+              bind:this={limitInput}
+              oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (v > 0) aiLimit = v; }}
+              onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+              onkeydown={(e) => {
+                if (e.key === 'Tab') { e.preventDefault(); aiInput?.focus(); aiInput?.select(); return; }
+                if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+              }}
+              class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+            />
+          </label>
+          {/if}
+        </div>
       </div>
 
       {#if !showSqlEditor && showSnippets}
@@ -954,7 +980,29 @@
           <table class="min-w-full text-left border-collapse" style="font-size: var(--table-font-size, 12px)">
             <thead>
               <tr>
-                <th class="sticky top-0 w-8 px-2 bg-zinc-950 border-b border-zinc-800 z-10"></th>
+                <th class="sticky top-0 w-8 px-2 bg-zinc-950 border-b border-zinc-800 z-10 select-none">
+                  <span class="invisible block">x</span>
+                  <div class="mt-1 border border-transparent rounded flex items-stretch aspect-square" style="height: 1.375rem; margin-left: -1px">
+                  <div
+                    class="flex-1 rounded-sm border-2 flex items-center justify-center cursor-pointer transition-colors
+                      {allSelected ? 'bg-white border-white' : someSelected ? 'border-zinc-400' : 'border-zinc-600 hover:border-zinc-400'}"
+                    onclick={() => {
+                      if (allSelected) selectedRows = new Set();
+                      else selectedRows = new Set(filteredRows.map(r => r.i));
+                    }}
+                  >
+                    {#if allSelected}
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                        <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {:else if someSelected}
+                      <svg width="8" height="2" viewBox="0 0 8 2" fill="none">
+                        <line x1="1" y1="1" x2="7" y2="1" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round"/>
+                      </svg>
+                    {/if}
+                  </div>
+                  </div>
+                </th>
                 {#each result.columns as col}
                   {#if !hiddenCols.has(col)}
                   <th
@@ -1066,7 +1114,6 @@
             {/if}
           </span>
           <div class="flex items-center gap-3">
-            {#if totalPages > 1}
             <label class="flex items-center gap-1.5">
               Rader per sida
               <select
@@ -1092,7 +1139,6 @@
                 onclick={() => currentPage++}
               >→</button>
             </div>
-            {/if}
           </div>
         </div>
       {/if}
@@ -1101,10 +1147,14 @@
 </div>
 
 {#if !searchVisible && aiQuery.trim()}
-  <div class="fixed z-30 left-1/2" style="top:40px; transform:translate(-50%,-50%);">
-    <span class="query-preview px-3 py-0.5 bg-zinc-950 rounded-full select-none pointer-events-none">
-      · {aiQuery.trim().slice(0, 30)}{aiQuery.trim().length > 30 ? '…' : ''} ·
+  <div class="fixed z-30 left-1/2 flex items-center gap-1.5 select-none pointer-events-none text-xs" style="top:20px; transform:translate(-50%,-50%);">
+    <span class="text-zinc-500">Söktext</span>
+    <span class="inline-flex items-center" style="font-size:15px; letter-spacing:-0.1em">
+      <span class="chevron-pulse" style="color:#ff3366; animation-delay:0s;   text-shadow:0 0 7px #ff3366">›</span>
+      <span class="chevron-pulse" style="color:#ffcc00; animation-delay:0.3s; text-shadow:0 0 7px #ffcc00">›</span>
+      <span class="chevron-pulse" style="color:#00ff88; animation-delay:0.6s; text-shadow:0 0 7px #00ff88">›</span>
     </span>
+    <span class="text-zinc-400">{aiQuery.trim().slice(0, 50)}{aiQuery.trim().length > 50 ? '…' : ''}</span>
   </div>
 {/if}
 
@@ -1353,26 +1403,13 @@
 {/if}
 
 <style>
-  @keyframes query-preview-scroll {
-    0%, 100% { background-position: 0% center; }
-    50%       { background-position: 100% center; }
+  @keyframes chevron-pulse {
+    0%, 100% { opacity: 0.4; }
+    50%       { opacity: 1; }
   }
-  @keyframes query-preview-spacing {
-    0%, 100% { letter-spacing: 0.08em; }
-    50%       { letter-spacing: 0.26em; }
-  }
-  .query-preview {
-    font-size: 11px;
-    text-transform: uppercase;
-    background: linear-gradient(90deg, #ff3366, #ffcc00, #00ff88, #ff3366);
-    background-size: 300% auto;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    opacity: 0.45;
-    animation:
-      query-preview-scroll 6s ease-in-out infinite,
-      query-preview-spacing 4s ease-in-out infinite;
+  .chevron-pulse {
+    animation: chevron-pulse 1.6s ease-in-out infinite;
+    letter-spacing: 0.05em;
   }
 
   @keyframes ai-spin {
