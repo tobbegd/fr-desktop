@@ -78,6 +78,7 @@
     debug.ai = p.debugAi ?? false;
     appearance.tableFontSize = p.tableFontSize ?? 12;
     appearance.editorFontSize = p.editorFontSize ?? 14;
+    appearance.collapseSearch = p.collapseSearch ?? true;
 
     if (p.apiKey) {
       view = "main";
@@ -576,6 +577,7 @@
       bind:actionMenuItems
       bind:mailMenuItems
       bind:kartaMenuItems
+      collapseSearch={appearance.collapseSearch}
     />
 
     {#if showMessagesPanel}

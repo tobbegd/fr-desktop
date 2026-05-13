@@ -21,8 +21,9 @@
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
+    collapseSearch?: boolean;
   };
-  let { dbPath, onOpenAiSettings, showSqlEditor = $bindable(false), actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]) }: Props = $props();
+  let { dbPath, onOpenAiSettings, showSqlEditor = $bindable(false), actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]), collapseSearch = true }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -42,7 +43,6 @@
   let aiInfoSql = $state("");
   let aiMode = $state<"sql" | "chat">("sql");
   let aiInput = $state<HTMLTextAreaElement | null>(null);
-  let windowMouseY = $state(9999);
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
@@ -174,13 +174,16 @@
   let running = $state(false);
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
-  const searchVisible = $derived(!result || windowMouseY < 150);
+  let searchVisible = $state(true);
+  $effect(() => { if (!result || !collapseSearch) searchVisible = true; });
   let pageSize = $state(200);
   let currentPage = $state(0);
 
   const pageSizes = [200, 400, 800];
 
   let selectedRows = $state(new Set<number>());
+  let dragging = $state(false);
+  let dragAdding = $state(true);
   let excludedRows = $state(new Set<number>());
   let hiddenCols = $state(new Set<string>());
   let colFilters = $state<Record<string, string>>({});
@@ -298,21 +301,26 @@
     copiedTimer = setTimeout(() => { copiedFeedback = ""; }, 2000);
   }
 
-  function toggleRowSelect(i: number, shift: boolean) {
-    const s = new Set(selectedRows);
-    if (shift && lastClickedRow !== null) {
+  function onCheckboxDown(e: MouseEvent, i: number) {
+    e.preventDefault();
+    if (e.shiftKey && lastClickedRow !== null) {
       const fromPos = filteredRows.findIndex(r => r.i === lastClickedRow);
       const toPos = filteredRows.findIndex(r => r.i === i);
       if (fromPos !== -1 && toPos !== -1) {
+        const s = new Set(selectedRows);
         const start = Math.min(fromPos, toPos);
         const end = Math.max(fromPos, toPos);
         filteredRows.slice(start, end + 1).forEach(r => s.add(r.i));
+        selectedRows = s;
       }
-    } else {
-      s.has(i) ? s.delete(i) : s.add(i);
-      lastClickedRow = i;
+      return;
     }
+    const s = new Set(selectedRows);
+    dragAdding = !s.has(i);
+    if (dragAdding) s.add(i); else s.delete(i);
     selectedRows = s;
+    lastClickedRow = i;
+    dragging = true;
   }
 
   function openContextMenu(e: MouseEvent, rowIdx: number, cellValue?: string) {
@@ -702,16 +710,17 @@
 
 </script>
 
-<svelte:window onmousemove={(e) => { windowMouseY = e.clientY; }} />
+<svelte:window onmouseup={() => dragging = false} />
 
 <!-- SearchArea fyller återstående höjd i föräldern -->
 <div class="flex-1 flex flex-col min-h-0">
 
   <!-- Sök-input (döljs när result finns och musen är nere) -->
-  <div class="shrink-0" style="display:grid; grid-template-rows:{searchVisible ? '1fr' : '0fr'}; transition:grid-template-rows 0.3s ease">
+  <div class="shrink-0" style="display:grid; grid-template-rows:{searchVisible ? '1fr' : '0fr'}; transition:grid-template-rows 0.3s ease"
+    onmouseenter={() => searchVisible = true}>
     <div class="overflow-hidden">
     <!-- AI-fält -->
-    <div class="px-3 pt-4 pb-5">
+    <div class="px-3 pt-7 pb-5">
       <div class="flex items-center gap-2">
         <!-- Vänster: spacer för centrering -->
         <div class="flex-1"></div>
@@ -722,14 +731,14 @@
           <div class="absolute -top-4 left-1/2 -translate-x-1/2 z-10 flex gap-1.5">
             <button
               onclick={() => switchMode('sql')}
-              class="px-3 py-1 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
+              class="px-2.5 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
                 {aiMode === 'sql'
                   ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
                   : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
-            >SQL</button>
+            >Sök</button>
             <button
               onclick={() => switchMode('chat')}
-              class="px-3 py-1 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
+              class="px-2.5 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
                 {aiMode === 'chat'
                   ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
                   : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
@@ -739,7 +748,7 @@
             <textarea
               bind:this={aiInput}
               bind:value={aiQuery}
-              placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Beskriv vad du vill söka...") : "AI ej konfigurerad — klicka för att konfigurera"}
+              placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Sök företag...") : "AI ej konfigurerad — klicka för att konfigurera"}
               class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px]"
               style="height: 64px"
               readonly={!aiReady || aiRunning}
@@ -906,6 +915,10 @@
   </div>
 
 
+  {#if result && collapseSearch && !searchVisible}
+    <div class="shrink-0 h-[20px]" onmouseenter={() => searchVisible = true}></div>
+  {/if}
+
   <!-- Resultat -->
   {#if error}
     <div class="px-4 py-3 text-sm text-red-400 font-mono">{error}</div>
@@ -941,6 +954,7 @@
           <table class="min-w-full text-left border-collapse" style="font-size: var(--table-font-size, 12px)">
             <thead>
               <tr>
+                <th class="sticky top-0 w-8 px-2 bg-zinc-950 border-b border-zinc-800 z-10"></th>
                 {#each result.columns as col}
                   {#if !hiddenCols.has(col)}
                   <th
@@ -981,20 +995,38 @@
                 {/each}
               </tr>
             </thead>
-            <tbody>
+            <tbody onmouseenter={() => { if (collapseSearch) searchVisible = false; }}>
               {#each pagedRows as { row, i }}
                 <tr
-                  class="border-b border-zinc-900 cursor-pointer select-none transition-colors
-                    {selectedRows.has(i) ? 'bg-amber-900/40' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
-                  onclick={(e) => toggleRowSelect(i, e.shiftKey)}
+                  class="border-b border-zinc-900 select-none transition-colors
+                    {i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
                   oncontextmenu={(e) => openContextMenu(e, i)}
-                  onmouseenter={() => hoveredRow = i}
+                  onmouseenter={() => {
+                    hoveredRow = i;
+                    if (dragging) {
+                      const s = new Set(selectedRows);
+                      if (dragAdding) s.add(i); else s.delete(i);
+                      selectedRows = s;
+                    }
+                  }}
                   onmouseleave={() => hoveredRow = null}
                 >
+                  <td
+                    class="px-2 w-8 cursor-pointer"
+                    onmousedown={(e) => onCheckboxDown(e, i)}
+                  >
+                    <div class="w-3.5 h-3.5 rounded-sm border-2 flex items-center justify-center transition-colors
+                      {selectedRows.has(i) ? 'bg-white border-white' : 'border-zinc-600 hover:border-zinc-400'}">
+                      {#if selectedRows.has(i)}
+                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                          <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      {/if}
+                    </div>
+                  </td>
                   {#each result.columns as col, colIdx}
                     {#if !hiddenCols.has(col)}
-                    <td class="px-3 py-1.5 whitespace-nowrap max-w-xs truncate
-                      {selectedRows.has(i) ? 'text-white' : 'text-zinc-300'}"
+                    <td class="px-3 py-1.5 whitespace-nowrap max-w-xs truncate text-zinc-300"
                       oncontextmenu={(e) => { e.stopPropagation(); openContextMenu(e, i, row[colIdx] !== null && row[colIdx] !== undefined ? String(row[colIdx]) : undefined); }}
                       ondblclick={(e) => { e.stopPropagation(); if (row[colIdx] !== null && row[colIdx] !== undefined) { const v = String(row[colIdx]); navigator.clipboard.writeText(v); flashCopied(v); } }}
                     >
@@ -1354,7 +1386,7 @@
   .ai-glow-wrapper {
     position: relative;
     border-radius: 0.375rem;
-    padding: 1.5px;
+    padding: 2px;
     background: rgb(63 63 70); /* zinc-700 */
     overflow: hidden;
   }

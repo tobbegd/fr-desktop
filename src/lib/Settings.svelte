@@ -123,6 +123,21 @@
         <SmtpSetup />
       {:else if activeSection === "appearance"}
         <div class="max-w-md flex flex-col gap-8">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={appearance.collapseSearch}
+              onchange={async (e) => {
+                appearance.collapseSearch = (e.target as HTMLInputElement).checked;
+                await savePrefs({ collapseSearch: appearance.collapseSearch });
+              }}
+              class="accent-zinc-400 w-4 h-4 cursor-pointer"
+            />
+            <div>
+              <p class="text-sm text-zinc-200">Fäll ihop sökfält</p>
+              <p class="text-xs text-zinc-500">Döljer sökfältet automatiskt när resultat visas.</p>
+            </div>
+          </label>
           <div>
             <p class="text-sm text-zinc-200 mb-1">Tabellstorlek</p>
             <p class="text-xs text-zinc-500 mb-3">Teckenstorlek i resultattabellen.</p>

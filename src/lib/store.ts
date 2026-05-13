@@ -31,6 +31,7 @@ export interface Prefs {
   smtpFromEmail: string;
   tableFontSize: number;
   editorFontSize: number;
+  collapseSearch: boolean;
 }
 
 const defaults: Prefs = {
@@ -57,6 +58,7 @@ const defaults: Prefs = {
   smtpFromEmail: "",
   tableFontSize: 12,
   editorFontSize: 14,
+  collapseSearch: true,
 };
 
 export async function loadPrefs(): Promise<Prefs> {
