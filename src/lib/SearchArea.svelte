@@ -44,6 +44,7 @@
   let aiMode = $state<"sql" | "chat">("sql");
   let aiInput = $state<HTMLTextAreaElement | null>(null);
   let limitInput = $state<HTMLInputElement | null>(null);
+  let aiInputFocused = $state(false);
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
@@ -72,15 +73,31 @@
     if (dbPath) loadSchema();
   });
 
+  let aiQueryHistory = $state<string[]>([]);
+
+  const _historyPalette = ['#ff3366', '#ffcc00', '#00ff88', '#a78bfa', '#38bdf8', '#fb923c'];
+  function _historyColor(q: string, prev: string | null): string {
+    let h = 0;
+    for (let i = 0; i < q.length; i++) h = (h * 31 + q.charCodeAt(i)) & 0xfffffff;
+    const avail = _historyPalette.filter(c => c !== prev);
+    return avail[Math.abs(h) % avail.length];
+  }
+  const aiHistoryColors = $derived.by(() => {
+    const out: string[] = [];
+    for (const q of aiQueryHistory) out.push(_historyColor(q, out.at(-1) ?? null));
+    return out;
+  });
+
   async function loadHistory() {
     historyStore = await Store.load("history.json");
     queryHistory = (await historyStore.get<string[]>("queries")) ?? [];
+    aiQueryHistory = (await historyStore.get<string[]>("aiQueries")) ?? [];
   }
 
   async function addToHistory(sql: string) {
     const trimmed = sql.trim();
     if (!trimmed || queryHistory.includes(trimmed)) return;
-    queryHistory = [trimmed, ...queryHistory].slice(0, 10);
+    queryHistory = [trimmed, ...queryHistory].slice(0, 20);
     await historyStore?.set("queries", queryHistory);
     await historyStore?.save();
   }
@@ -88,6 +105,20 @@
   async function removeFromHistory(sql: string) {
     queryHistory = queryHistory.filter(q => q !== sql);
     await historyStore?.set("queries", queryHistory);
+    await historyStore?.save();
+  }
+
+  async function addToAiHistory(query: string) {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    aiQueryHistory = [trimmed, ...aiQueryHistory.filter(q => q !== trimmed)].slice(0, 20);
+    await historyStore?.set("aiQueries", aiQueryHistory);
+    await historyStore?.save();
+  }
+
+  async function removeFromAiHistory(query: string) {
+    aiQueryHistory = aiQueryHistory.filter(q => q !== query);
+    await historyStore?.set("aiQueries", aiQueryHistory);
     await historyStore?.save();
   }
 
@@ -566,6 +597,7 @@
           aiError = "AI försökte ändra databasen — det är inte tillåtet. Försök igen.";
         } else {
           sqlQuery = cleaned;
+          addToAiHistory(aiQuery);
           runQuery(true);
           quickSaveActive = true;
           quickSaveKey++;
@@ -727,27 +759,42 @@
     <!-- AI-fält -->
     <div class="px-3 pt-7 pb-5">
       <div class="flex items-center gap-2">
-        <!-- Vänster: spacer för centrering -->
-        <div class="flex-1"></div>
+        <!-- Vänster: AI-sök historik -->
+        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto max-h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+          {#each aiQueryHistory as q, idx}
+            <div
+              class="group flex items-center justify-between gap-1 cursor-pointer select-none"
+              onclick={() => { aiQuery = q; runAiQuery(); }}
+            >
+              <span class="w-2 h-2 shrink-0 transition-all"
+                style="background:{aiHistoryColors[idx]}; box-shadow: 0 0 5px {aiHistoryColors[idx]}"></span>
+              <span class="text-xs text-zinc-600 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
+            </div>
+          {/each}
+        </div>
 
         <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->
-        <div class="relative w-[44%]">
-          <!-- Mode-knappar centrerade, lätt nedsjunkna uppifrån -->
-          <div class="absolute -top-4 left-1/2 -translate-x-1/2 z-10 flex gap-1.5">
-            <button
-              onclick={() => switchMode('sql')}
-              class="px-2.5 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
-                {aiMode === 'sql'
-                  ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
-                  : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
-            >Sök</button>
-            <button
-              onclick={() => switchMode('chat')}
-              class="px-2.5 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer bg-zinc-950
-                {aiMode === 'chat'
-                  ? 'text-green-400 border border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.55)]'
-                  : 'text-zinc-500 border border-zinc-700 hover:text-zinc-300 hover:border-zinc-500'}"
-            >Chat</button>
+        <div class="relative w-[44%] group">
+          <!-- Tab centrerad, smälter ihop med textareans kant -->
+          <div class="ai-tab absolute left-1/2 -translate-x-1/2 z-10 rounded-t-md overflow-hidden"
+            class:ai-thinking={aiRunning}
+            class:ai-focused={aiInputFocused}
+            style="bottom: calc(100% + 2px); margin-bottom: -4px; padding: 2px 2px 0 2px;">
+            <div class="flex items-center gap-0 bg-zinc-900 rounded-t-sm relative z-[1]">
+              <button
+                onclick={() => switchMode('sql')}
+                class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
+                  {aiMode === 'sql' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+                style={aiMode === 'sql' ? 'text-shadow: 0 0 8px #00ff88' : ''}
+              >Sök</button>
+              <span class="text-zinc-700 text-xs select-none">|</span>
+              <button
+                onclick={() => switchMode('chat')}
+                class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
+                  {aiMode === 'chat' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+                style={aiMode === 'chat' ? 'text-shadow: 0 0 8px #00ff88' : ''}
+              >Chat</button>
+            </div>
           </div>
           <div class="ai-glow-wrapper" class:ai-thinking={aiRunning}>
             <textarea
@@ -757,7 +804,8 @@
               class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px]"
               style="height: 64px"
               readonly={!aiReady || aiRunning}
-              onfocus={() => { if (!aiReady) onOpenAiSettings(); }}
+              onfocus={() => { aiInputFocused = true; if (!aiReady) onOpenAiSettings(); }}
+              onblur={() => { aiInputFocused = false; }}
               onkeydown={(e) => {
                 if (e.key === "Tab") { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
                 if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); }
@@ -1403,6 +1451,9 @@
 {/if}
 
 <style>
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+
   @keyframes chevron-pulse {
     0%, 100% { opacity: 0.4; }
     50%       { opacity: 1; }
@@ -1418,6 +1469,35 @@
   @keyframes ai-pulse-shadow {
     0%, 100% { box-shadow: 0 0 8px 1px rgba(255, 51, 102, 0.35), 0 0 20px 2px rgba(0, 255, 136, 0.15); }
     50%       { box-shadow: 0 0 14px 2px rgba(255, 204, 0, 0.45), 0 0 30px 4px rgba(255, 51, 102, 0.2); }
+  }
+
+  .ai-tab {
+    background: rgb(63 63 70); /* zinc-700 */
+  }
+  .ai-tab.ai-focused:not(.ai-thinking) {
+    background: rgb(113 113 122); /* zinc-500 */
+  }
+  .ai-tab.ai-thinking {
+    background: transparent;
+    animation: ai-pulse-shadow 2s ease-in-out infinite;
+  }
+  .ai-tab.ai-thinking::before {
+    content: '';
+    position: absolute;
+    width: 200%;
+    height: 400%;
+    top: -150%;
+    left: -50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 10%,
+      #ff3366 25%,
+      #ffcc00 50%,
+      #00ff88 75%,
+      transparent 90%
+    );
+    animation: ai-spin 1.4s linear infinite;
+    z-index: 0;
   }
 
   .ai-glow-wrapper {
