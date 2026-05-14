@@ -203,7 +203,7 @@
     return { destroy() { node.removeEventListener("wheel", onWheel); } };
   }
 
-  let aiLimit = $state(1000);
+  let aiLimit = $state(300);
 
   let running = $state(false);
   let error = $state("");
@@ -761,6 +761,7 @@
       <div class="flex items-center gap-2">
         <!-- Vänster: AI-sök historik -->
         <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto max-h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+          <div class="shrink-0 h-4"></div>
           {#each aiQueryHistory as q, idx}
             <div
               class="group flex items-center justify-between gap-1 cursor-pointer select-none"
@@ -768,7 +769,7 @@
             >
               <span class="w-2 h-2 shrink-0 transition-all"
                 style="background:{aiHistoryColors[idx]}; box-shadow: 0 0 5px {aiHistoryColors[idx]}"></span>
-              <span class="text-xs text-zinc-600 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
+              <span class="text-sm text-zinc-600 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
             </div>
           {/each}
         </div>
@@ -852,7 +853,7 @@
         <div class="flex-1 flex items-start pt-1 pl-2">
           {#if aiMode === 'sql'}
           <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-            Limit
+            Antal
             <input
               type="text"
               value={aiLimit}
