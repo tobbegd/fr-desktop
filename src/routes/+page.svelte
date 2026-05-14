@@ -442,29 +442,6 @@
 {:else if view === "mail"}
   <MailPage onClose={() => { view = prevView; }} />
 
-{:else if view === "settings"}
-  <Settings
-    {serverUrl}
-    {apiKey}
-    {email}
-    {tier}
-    {dbExportDate}
-    {dbPath}
-    initialSection={settingsInitialSection}
-    onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
-    onLogout={async () => {
-      await savePrefs({ apiKey: "", email: "", tier: "", offlineLogins: 0, dbEtag: "", dbSha256: "" });
-      apiKey = ""; email = ""; tier = ""; offlineLogins = 0; dbEtag = ""; dbSha256 = "";
-      statusMsg = "";
-      view = "auth";
-    }}
-    onClose={async () => {
-      view = "main";
-      settingsInitialSection = "general";
-      const p = await loadPrefs();
-    }}
-  />
-
 {:else}
   <div class="flex flex-col h-screen bg-zinc-950 text-white">
     <!-- Topmeny -->
@@ -579,6 +556,32 @@
       bind:kartaMenuItems
       collapseSearch={appearance.collapseSearch}
     />
+
+    {#if view === "settings"}
+      <div class="fixed inset-0 z-50 bg-zinc-950">
+        <Settings
+          {serverUrl}
+          {apiKey}
+          {email}
+          {tier}
+          {dbExportDate}
+          {dbPath}
+          initialSection={settingsInitialSection}
+          onChangeKey={() => { prevView = "settings"; view = "auth"; statusMsg = ""; }}
+          onLogout={async () => {
+            await savePrefs({ apiKey: "", email: "", tier: "", offlineLogins: 0, dbEtag: "", dbSha256: "" });
+            apiKey = ""; email = ""; tier = ""; offlineLogins = 0; dbEtag = ""; dbSha256 = "";
+            statusMsg = "";
+            view = "auth";
+          }}
+          onClose={async () => {
+            view = "main";
+            settingsInitialSection = "general";
+            const p = await loadPrefs();
+          }}
+        />
+      </div>
+    {/if}
 
     {#if showMessagesPanel}
       <MessagesPanel

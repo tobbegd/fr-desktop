@@ -70,7 +70,8 @@ export function buildChatPrompt(
   schema: Record<string, string[]>,
   question: string,
   aiExpl: AiExpl = {},
-  currentSql = ""
+  currentSql = "",
+  history: { question: string; answer: string }[] = []
 ): string {
   const columnGuide = buildColumnGuide(schema, aiExpl);
   const schemaText = Object.entries(schema)
@@ -81,7 +82,14 @@ export function buildChatPrompt(
     ? `\nAktiv SQL-fråga i editorn:\n${currentSql.trim()}\n`
     : "";
 
-  return `Du är en assistent för en svensk företagsdatabas i SQLite. Svara på svenska med klartext — ingen SQL om det inte specifikt efterfrågas.
+  const historyText = history.length > 0
+    ? "\nTidigare i konversationen:\n" +
+      history.map(m => `Användare: ${m.question}\nAssistent: ${m.answer}`).join("\n\n") + "\n"
+    : "";
+
+  return `Du är en hjälpassistent inbyggd i en svensk företagsdatabas-app. Du får BARA svara på frågor som rör databasen, dess data, eller hur appen fungerar. Om användaren frågar om något annat ska du artigt förklara att du bara kan hjälpa till med företagsdatabasen.
+
+Svara på svenska med klartext — ingen SQL om det inte specifikt efterfrågas.
 
 Tabeller:
 ${schemaText}
@@ -94,8 +102,8 @@ Viktiga fakta om databasen:
 - Kolumnerna telefon, email, webbadress, nettoomsattning, arets_resultat, eget_kapital finns DIREKT i bolag-tabellen — ingen JOIN behövs
 - JOIN med arsredovisningar behövs BARA om användaren vill ha historik för flera år
 - Sök text med ulow(kolumn) LIKE — aldrig LOWER()
-${sqlContext}
-Fråga: ${question}`;
+${sqlContext}${historyText}
+Användare: ${question}`;
 }
 
 export function buildSmartPrompt(

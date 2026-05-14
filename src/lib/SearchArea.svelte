@@ -45,6 +45,7 @@
   let aiInput = $state<HTMLTextAreaElement | null>(null);
   let limitInput = $state<HTMLInputElement | null>(null);
   let aiInputFocused = $state(false);
+  let chatMessages = $state<{ question: string; answer: string; answerSql: string | null; ts: string }[]>([]);
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
@@ -209,7 +210,7 @@
   let error = $state("");
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
   let searchVisible = $state(true);
-  $effect(() => { if (!result || !collapseSearch) searchVisible = true; });
+  $effect(() => { if (!result || !collapseSearch || aiMode === 'chat') searchVisible = true; });
   let pageSize = $state(200);
   let currentPage = $state(0);
 
@@ -579,9 +580,15 @@
     try {
       const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
       if (aiMode === "chat") {
-        const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery));
-        aiInfo = raw.trim();
-        aiInfoSql = extractSqlFromText(aiInfo);
+        const history = [...chatMessages].reverse();
+        const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery, history));
+        const answer = raw.trim();
+        const answerSql = extractSqlFromText(answer) || null;
+        const question = aiQuery;
+        const ts = new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+        chatMessages = [{ question, answer, answerSql, ts }, ...chatMessages];
+        aiQuery = "";
+        setTimeout(() => { aiInput?.focus(); }, 0);
       } else {
         const promptFn = buildSmartPrompt;
         const raw = await callAi(promptFn(schema, aiQuery, aiExpl, aiLimit));
@@ -759,8 +766,9 @@
     <!-- AI-fält -->
     <div class="px-3 pt-7 pb-5">
       <div class="flex items-center gap-2">
-        <!-- Vänster: AI-sök historik -->
-        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto max-h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+        <!-- Vänster: historik (SQL-läge) / tom (chat-läge) — fast höjd för stabil layout -->
+        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+          {#if aiMode === 'sql'}
           <div class="shrink-0 h-4"></div>
           {#each aiQueryHistory as q, idx}
             <div
@@ -772,6 +780,7 @@
               <span class="text-sm text-zinc-600 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
             </div>
           {/each}
+          {/if}
         </div>
 
         <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->
@@ -882,7 +891,7 @@
       {#if aiError}
         <p class="text-xs text-red-400 mt-1">{aiError}</p>
       {/if}
-      {#if aiInfo}
+      {#if aiMode === 'sql' && aiInfo}
         <div class="relative mt-1 mb-3">
           <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 max-h-48 overflow-y-auto">
             <p class="text-zinc-300 whitespace-pre-wrap leading-relaxed" style="font-size: var(--table-font-size, 12px)">{aiInfo}</p>
@@ -994,10 +1003,37 @@
     <div class="shrink-0 h-[20px]" onmouseenter={() => searchVisible = true}></div>
   {/if}
 
+  {#if aiMode === 'chat' && chatMessages.length > 0}
+    <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-3 pt-2 pb-4">
+      {#each chatMessages as msg}
+        <div class="flex flex-col gap-1.5">
+          <p class="text-sm text-zinc-500 text-right pr-1 truncate"><span class="text-zinc-700 text-xs mr-1.5">{msg.ts}</span>{msg.question}</p>
+          <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3">
+            <p class="text-[15px] text-zinc-300 whitespace-pre-wrap leading-relaxed">{msg.answer}</p>
+          </div>
+          {#if msg.answerSql}
+            <div class="flex justify-center">
+              <button
+                onclick={() => { sqlQuery = fixSql(msg.answerSql!); switchMode('sql'); runQuery(true); }}
+                class="px-3 py-0.5 text-xs rounded-full border border-zinc-600 hover:border-emerald-500 bg-zinc-900 text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer select-none"
+              >Kör SQL-förslag</button>
+            </div>
+          {/if}
+        </div>
+      {/each}
+      <div class="flex justify-center">
+        <button
+          onclick={() => { chatMessages = []; }}
+          class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors cursor-pointer select-none"
+        >Rensa konversation</button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Resultat -->
-  {#if error}
+  {#if aiMode !== 'chat' && error}
     <div class="px-4 py-3 text-sm text-red-400 font-mono">{error}</div>
-  {:else if result}
+  {:else if aiMode !== 'chat' && result}
     <div class="flex-1 flex flex-col min-h-0">
 
       {#if result.rows.length === 0}
