@@ -272,7 +272,7 @@
       type="text"
       bind:value={search}
       placeholder="Sök snippet..."
-      class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+      class="flex-1 max-w-[300px] bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
     />
     {#if showAddInput}
       <input
@@ -286,7 +286,7 @@
       <button
         onclick={addSnippet}
         disabled={!addingName.trim() || !currentSql.trim()}
-        class="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-500 disabled:opacity-40 cursor-pointer disabled:cursor-default transition-colors"
+        class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-40 cursor-pointer disabled:cursor-default transition-colors"
       >Spara</button>
       <button
         onclick={() => { showAddInput = false; addingName = ""; }}
@@ -297,8 +297,8 @@
         onclick={() => showAddInput = true}
         disabled={!currentSql.trim() || isStandard}
         title={isStandard ? "Välj en grupp för att spara snippets" : "Spara nuvarande SQL som snippet"}
-        class="px-2 py-1 text-xs text-zinc-400 hover:text-white disabled:opacity-30 cursor-pointer disabled:cursor-default transition-colors whitespace-nowrap"
-      >+ Spara nuvarande</button>
+        class="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-500 disabled:opacity-30 disabled:bg-zinc-700 cursor-pointer disabled:cursor-default transition-colors whitespace-nowrap"
+      >Spara</button>
     {/if}
   </div>
 

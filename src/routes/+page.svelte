@@ -82,6 +82,14 @@
 
     if (p.apiKey) {
       view = "main";
+
+      const pending = p.pendingAiCalls ?? 0;
+      if (pending > 0) {
+        invoke("report_ai_calls", { serverUrl: p.serverUrl || serverUrl, apiKey: p.apiKey, count: pending })
+          .then(() => savePrefs({ pendingAiCalls: 0 }))
+          .catch(() => {});
+      }
+
       const inOfflineMode = (p.offlineLogins ?? 0) > 0;
 
       if (inOfflineMode) {

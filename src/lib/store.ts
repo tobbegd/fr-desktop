@@ -32,6 +32,7 @@ export interface Prefs {
   tableFontSize: number;
   editorFontSize: number;
   collapseSearch: boolean;
+  pendingAiCalls: number;
 }
 
 const defaults: Prefs = {
@@ -59,6 +60,7 @@ const defaults: Prefs = {
   tableFontSize: 12,
   editorFontSize: 14,
   collapseSearch: true,
+  pendingAiCalls: 0,
 };
 
 export async function loadPrefs(): Promise<Prefs> {
@@ -69,6 +71,13 @@ export async function loadPrefs(): Promise<Prefs> {
     if (val !== null && val !== undefined) (prefs as any)[key] = val;
   }
   return prefs;
+}
+
+export async function incrementPendingAiCalls(): Promise<void> {
+  const store = await getStore();
+  const current = (await store.get<number>("pendingAiCalls")) ?? 0;
+  await store.set("pendingAiCalls", current + 1);
+  await store.save();
 }
 
 export async function savePrefs(prefs: Partial<Prefs>): Promise<void> {

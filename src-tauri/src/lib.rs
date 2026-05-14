@@ -922,6 +922,25 @@ async fn query_claude(_api_key: String, _model: String, prompt: String) -> Resul
 }
 
 #[tauri::command]
+async fn report_ai_calls(server_url: String, api_key: String, count: u32) -> Result<(), String> {
+    if count == 0 || server_url.is_empty() || api_key.is_empty() {
+        return Ok(());
+    }
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/ai-call", server_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&serde_json::json!({ "count": count }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Serverfel: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn send_utskick_test(
     host: String,
     port: u16,
@@ -1084,6 +1103,7 @@ pub fn run() {
             save_file_binary,
             get_os,
             query_claude,
+            report_ai_calls,
             list_claude_models,
             quit,
             send_test_email,

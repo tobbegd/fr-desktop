@@ -12,6 +12,7 @@
   import KartaPanel from "./KartaPanel.svelte";
   import { debug } from "$lib/debug.svelte";
   import { buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
+  import { incrementPendingAiCalls } from "$lib/store";
   import type { MenuItem } from "./MenuBar.svelte";
 
   type Props = {
@@ -45,17 +46,18 @@
   let aiInput = $state<HTMLTextAreaElement | null>(null);
   let limitInput = $state<HTMLInputElement | null>(null);
   let aiInputFocused = $state(false);
-  let chatMessages = $state<{ question: string; answer: string; answerSql: string | null; ts: string }[]>([]);
+  let chatMessages = $state<{ question: string; answer: string; answerSql: string | null; ts: string; corrected?: boolean }[]>([]);
+  let latestSqlBtn = $state<HTMLButtonElement | null>(null);
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
   function switchMode(mode: "sql" | "chat") {
     aiQueryByMode[aiMode] = aiQuery;
     aiMode = mode;
-    aiQuery = aiQueryByMode[mode];
+    aiQuery = mode === 'chat' ? "" : aiQueryByMode[mode];
     aiInfo = "";
     aiInfoSql = "";
-    setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
+    setTimeout(() => { aiInput?.focus(); }, 0);
   }
   let schema = $state<Record<string, string[]>>({});
   let aiExpl = $state<AiExpl>({});
@@ -568,6 +570,7 @@
     if (debug.ai) debug.log(`→ Claude\n${prompt}`);
     const result = await tauri<string>("query_claude", { apiKey: "", model: "", prompt });
     if (debug.ai) debug.log(`← Claude\n${result}`);
+    incrementPendingAiCalls();
     return result;
   }
 
@@ -614,6 +617,43 @@
       aiError = String(e);
     } finally {
       aiRunning = false;
+    }
+  }
+
+  async function runChatSuggestion(sql: string, autoCorrect = true) {
+    sql = sql.replace(/\s+LIMIT\s+\d+\s*$/i, '').trim() + `\nLIMIT ${aiLimit}`;
+    running = true;
+    error = "";
+    result = null;
+    try {
+      const res = await tauri<{ columns: string[]; rows: unknown[][]; truncated: boolean }>(
+        "query_db", { dbPath, sql }
+      );
+      running = false;
+      sqlQuery = sql;
+      switchMode('sql');
+      result = res;
+      addToHistory(sql);
+    } catch (e) {
+      running = false;
+      if (!autoCorrect) { error = String(e); switchMode('sql'); return; }
+      const errorText = String(e).replace(/^Error: /, '').split('\n')[0];
+      const question = `SQL-felet: "${errorText}". Korrigera SQL-frågan.`;
+      const ts = new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+      chatMessages = [{ question, answer: "…", answerSql: null, ts, corrected: true }, ...chatMessages];
+      aiRunning = true;
+      try {
+        const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
+        const history = [...chatMessages.slice(1)].reverse();
+        const raw = await callAi(buildChatPrompt(schema, question, aiExpl, sql, history));
+        const answer = raw.trim();
+        const answerSql = extractSqlFromText(answer) || null;
+        chatMessages = [{ question, answer, answerSql, ts, corrected: true }, ...chatMessages.slice(1)];
+      } catch {
+        chatMessages = [{ question, answer: "Kunde inte korrigera SQL:en automatiskt.", answerSql: null, ts, corrected: true }, ...chatMessages.slice(1)];
+      } finally {
+        aiRunning = false;
+      }
     }
   }
 
@@ -754,7 +794,10 @@
 
 </script>
 
-<svelte:window onmouseup={() => dragging = false} />
+<svelte:window
+  onmouseup={() => dragging = false}
+  onkeydown={(e) => { if (e.key === " " && e.ctrlKey) { e.preventDefault(); switchMode(aiMode === 'sql' ? 'chat' : 'sql'); } }}
+/>
 
 <!-- SearchArea fyller återstående höjd i föräldern -->
 <div class="flex-1 flex flex-col min-h-0">
@@ -786,24 +829,30 @@
         <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->
         <div class="relative w-[44%] group">
           <!-- Tab centrerad, smälter ihop med textareans kant -->
-          <div class="ai-tab absolute left-1/2 -translate-x-1/2 z-10 rounded-t-md overflow-hidden"
+          <div class="ai-tab absolute left-1/2 -translate-x-1/2 z-10 rounded-t-md"
             class:ai-thinking={aiRunning}
             class:ai-focused={aiInputFocused}
             style="bottom: calc(100% + 2px); margin-bottom: -4px; padding: 2px 2px 0 2px;">
             <div class="flex items-center gap-0 bg-zinc-900 rounded-t-sm relative z-[1]">
-              <button
-                onclick={() => switchMode('sql')}
-                class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
-                  {aiMode === 'sql' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
-                style={aiMode === 'sql' ? 'text-shadow: 0 0 8px #00ff88' : ''}
-              >Sök</button>
+              <div class="relative group/tip">
+                <button
+                  onclick={() => switchMode('sql')}
+                  class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
+                    {aiMode === 'sql' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+                  style={aiMode === 'sql' ? 'text-shadow: 0 0 8px #00ff88' : ''}
+                >Sök</button>
+                <span class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap opacity-0 group-hover/tip:opacity-100 transition-opacity delay-700 z-50">ctrl+space → växla mellan sök och chat läge</span>
+              </div>
               <span class="text-zinc-700 text-xs select-none">|</span>
-              <button
-                onclick={() => switchMode('chat')}
-                class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
-                  {aiMode === 'chat' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
-                style={aiMode === 'chat' ? 'text-shadow: 0 0 8px #00ff88' : ''}
-              >Chat</button>
+              <div class="relative group/tip">
+                <button
+                  onclick={() => switchMode('chat')}
+                  class="text-xs font-medium transition-colors cursor-pointer px-3 py-1.5
+                    {aiMode === 'chat' ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+                  style={aiMode === 'chat' ? 'text-shadow: 0 0 8px #00ff88' : ''}
+                >Chat</button>
+                <span class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap opacity-0 group-hover/tip:opacity-100 transition-opacity delay-700 z-50">ctrl+space → växla mellan sök och chat läge</span>
+              </div>
             </div>
           </div>
           <div class="ai-glow-wrapper" class:ai-thinking={aiRunning}>
@@ -817,7 +866,7 @@
               onfocus={() => { aiInputFocused = true; if (!aiReady) onOpenAiSettings(); }}
               onblur={() => { aiInputFocused = false; }}
               onkeydown={(e) => {
-                if (e.key === "Tab") { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
+                if (e.key === "Tab") { e.preventDefault(); if (aiMode === 'chat' && latestSqlBtn) { latestSqlBtn.focus(); } else { limitInput?.focus(); limitInput?.select(); } return; }
                 if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); }
               }}
               oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; }}
@@ -1005,7 +1054,7 @@
 
   {#if aiMode === 'chat' && chatMessages.length > 0}
     <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-3 pt-2 pb-4">
-      {#each chatMessages as msg}
+      {#each chatMessages as msg, i}
         <div class="flex flex-col gap-1.5">
           <p class="text-sm text-zinc-500 text-right pr-1 truncate"><span class="text-zinc-700 text-xs mr-1.5">{msg.ts}</span>{msg.question}</p>
           <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3">
@@ -1013,10 +1062,18 @@
           </div>
           {#if msg.answerSql}
             <div class="flex justify-center">
-              <button
-                onclick={() => { sqlQuery = fixSql(msg.answerSql!); switchMode('sql'); runQuery(true); }}
-                class="px-3 py-0.5 text-xs rounded-full border border-zinc-600 hover:border-emerald-500 bg-zinc-900 text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer select-none"
-              >Kör SQL-förslag</button>
+              {#if i === 0}
+                <button
+                  bind:this={latestSqlBtn}
+                  onclick={() => runChatSuggestion(fixSql(msg.answerSql!), !msg.corrected)}
+                  class="px-3 py-0.5 text-xs rounded-full border border-transparent bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 focus:border-emerald-500 focus:outline-none transition-colors cursor-pointer select-none"
+                >Kör SQL-förslag</button>
+              {:else}
+                <button
+                  onclick={() => runChatSuggestion(fixSql(msg.answerSql!), !msg.corrected)}
+                  class="px-3 py-0.5 text-xs rounded-full border border-transparent bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 focus:border-emerald-500 focus:outline-none transition-colors cursor-pointer select-none"
+                >Kör SQL-förslag</button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1516,6 +1573,7 @@
   }
   .ai-tab.ai-thinking {
     background: transparent;
+    overflow: hidden;
     animation: ai-pulse-shadow 2s ease-in-out infinite;
   }
   .ai-tab.ai-thinking::before {
