@@ -40,6 +40,7 @@ Regler:
 - För verksamhetstyp: sök ALLTID i ALLA fem kolumner med OR: sni_1_namn, sni_2_namn, sni_3_namn, verksamhet, orgnamn — detta är OBLIGATORISKT, hoppa aldrig över verksamhet eller orgnamn även om sni-termerna verkar täcka frågan. Många bolag har branschen BARA i orgnamn eller verksamhet och saknar rätt SNI-kod
 - orgform är bolagsform (AB, HB...) — använd aldrig orgform för att söka bransch
 - Använd alltid LIMIT — om antal efterfrågas, använd det antalet, annars LIMIT 200 (kan överskridas av användaren)
+- Inkludera ALLTID orgnr i SELECT, även när användaren inte ber om det — det behövs för att appen ska kunna skapa brevsäckar och identifiera bolag
 - bolag har redan kolumnen webbadress — JOIN:a INTE webbplatser-tabellen för webbadress
 - bolag har redan kolumnerna nettoomsattning, arets_resultat, eget_kapital — JOIN:a INTE arsredovisningar för dessa, använd direkt från bolag
 - JOIN med arsredovisningar ENDAST om användaren specifikt ber om historik eller flera år — då: JOIN (SELECT orgnr, arets_resultat, rakenskapsar_slut FROM arsredovisningar GROUP BY orgnr HAVING rakenskapsar_slut = MAX(rakenskapsar_slut)) AS ar ON ar.orgnr = b.orgnr
@@ -126,6 +127,7 @@ Viktiga regler:
 - "Med email/telefon/webbadress" = IS NOT NULL AND <> ''
 - "Med nyckeltal" = nettoomsattning IS NOT NULL
 - Använd alltid LIMIT — om antal efterfrågas använd det antalet, annars LIMIT ${limit}
+- Inkludera ALLTID orgnr i SELECT, även när användaren inte ber om det — det behövs för att appen ska kunna skapa brevsäckar och identifiera bolag
 - Använd INTE tabellalias (FROM bolag b) om det inte finns en JOIN — referera direkt till kolumnnamn
 - Om alias används: ulow() omsluter kolumnen, INTE aliset — skriv ulow(b.postort), ALDRIG b.ulow(postort)
 
@@ -142,7 +144,7 @@ Fråga: verkstad i stockholm med nyckeltal
 SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT ${limit};
 
 Fråga: restauranger i göteborg med email
-SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT ${limit};
+SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT ${limit};
 
 Fråga: it-konsulter i norrland med historik per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT ${limit};
@@ -205,7 +207,7 @@ Fråga: verkstad med nyckeltal 3st
 SQL: SELECT * FROM bolag WHERE (ulow(verksamhet) LIKE '%verkstad%' OR ulow(orgnamn) LIKE '%verkstad%') AND nettoomsattning IS NOT NULL LIMIT 3;
 
 Fråga: aktiebolag i stockholms län med omsättning över 10 miljoner
-SQL: SELECT orgnamn, sni_1_namn, nettoomsattning, medelantal_anstallda FROM bolag WHERE aktiv = 1 AND orgform = 'AB-ORGFO' AND sateslän = 'Stockholms län' AND nettoomsattning IS NOT NULL AND nettoomsattning > 10000000 ORDER BY nettoomsattning DESC LIMIT 200;
+SQL: SELECT orgnr, orgnamn, sni_1_namn, nettoomsattning, medelantal_anstallda FROM bolag WHERE aktiv = 1 AND orgform = 'AB-ORGFO' AND sateslän = 'Stockholms län' AND nettoomsattning IS NOT NULL AND nettoomsattning > 10000000 ORDER BY nettoomsattning DESC LIMIT 200;
 
 Fråga: visa bolag i örebro på karta
 SQL: SELECT orgnr, orgnamn, postort, gatuadress, lat, lon, postort_lat, postort_lon FROM bolag WHERE ulow(postort) LIKE '%örebro%' LIMIT 200;
@@ -217,7 +219,7 @@ Fråga: 50 bolag från stockholm med webbadress
 SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND webbadress IS NOT NULL AND webbadress <> '' LIMIT 50;
 
 Fråga: restauranger i göteborg med telefon och webbadress
-SQL: SELECT orgnamn, telefon, webbadress FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND telefon IS NOT NULL AND telefon <> '' AND webbadress IS NOT NULL AND webbadress <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%') LIMIT 200;
+SQL: SELECT orgnr, orgnamn, telefon, webbadress FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND telefon IS NOT NULL AND telefon <> '' AND webbadress IS NOT NULL AND webbadress <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%') LIMIT 200;
 
 Fråga: bolag med email
 SQL: SELECT * FROM bolag WHERE email IS NOT NULL AND email <> '' LIMIT 200;
@@ -227,7 +229,7 @@ SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%karlstad
 
 
 Fråga: restauranger i stockholm med email
-SQL: SELECT orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT 200;
+SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT 200;
 
 Fråga: bolag i stockholm med email, bara gmail-adresser, sortera på namn
 SQL: SELECT orgnr, orgnamn, email FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND email IS NOT NULL AND email <> '' AND LOWER(email) LIKE '%@gmail.com' ORDER BY orgnamn LIMIT 200;

@@ -14,17 +14,20 @@
   import { buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
   import { incrementPendingAiCalls } from "$lib/store";
   import type { MenuItem } from "./MenuBar.svelte";
+  import DashboardPanel from "./DashboardPanel.svelte";
 
   type Props = {
     dbPath: string;
     onOpenAiSettings: () => void;
+    onOpenMail?: () => void;
     showSqlEditor?: boolean;
+    showDashboard?: boolean;
     actionMenuItems?: MenuItem[];
     mailMenuItems?: MenuItem[];
     kartaMenuItems?: MenuItem[];
     collapseSearch?: boolean;
   };
-  let { dbPath, onOpenAiSettings, showSqlEditor = $bindable(false), actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]), collapseSearch = true }: Props = $props();
+  let { dbPath, onOpenAiSettings, onOpenMail, showSqlEditor = $bindable(false), showDashboard = $bindable(true), actionMenuItems = $bindable([]), mailMenuItems = $bindable([]), kartaMenuItems = $bindable([]), collapseSearch = true }: Props = $props();
 
   let showSnippets = $state(false);
   let showHistory = $state(false);
@@ -213,6 +216,8 @@
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
   let searchVisible = $state(true);
   $effect(() => { if (!result || !collapseSearch || aiMode === 'chat') searchVisible = true; });
+  $effect(() => { if (result !== null) showDashboard = false; });
+  $effect(() => { if (showDashboard) { result = null; error = ""; } });
   let pageSize = $state(200);
   let currentPage = $state(0);
 
@@ -277,6 +282,8 @@
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
   const allSelected = $derived(filteredRows.length > 0 && filteredRows.every(({i}) => selectedRows.has(i)));
   const someSelected = $derived(selectedRows.size > 0 && !allSelected);
+  const pageAllSelected = $derived(pagedRows.length > 0 && pagedRows.every(({i}) => selectedRows.has(i)));
+  const pageAnySelected = $derived(pagedRows.some(({i}) => selectedRows.has(i)));
 
   const filteredRows = $derived.by(() => {
     if (!result) return [];
@@ -465,9 +472,10 @@
   }
 
   async function oppnaSackDialog(typ: "ny" | "befintlig") {
-    sackError = "";
     sackNamn = "";
     sackResult = null;
+    const harOrgnr = result !== null && result.columns.includes("orgnr");
+    sackError = harOrgnr ? "" : "Frågan behöver innehålla kolumnen orgnr för att skapa brevsäck.";
     if (typ === "befintlig") {
       sackarList = await tauri<SackItem[]>("list_sackar");
     }
@@ -477,6 +485,7 @@
   async function skapaSackFranMarkerade() {
     const namn = sackNamn.trim();
     if (!namn) return;
+    if (!result?.columns.includes("orgnr")) { sackError = "Frågan behöver innehålla kolumnen orgnr för att skapa brevsäck."; return; }
     sackBusy = true;
     sackError = "";
     sackResult = null;
@@ -738,6 +747,11 @@
       disabled: selectedRows.size === 0,
     });
     items.push({
+      label: `Markera alla (${filteredRows.length})`,
+      action: () => { selectedRows = new Set(filteredRows.map(r => r.i)); },
+      disabled: allSelected,
+    });
+    items.push({
       label: "Avmarkera alla",
       action: () => { selectedRows = new Set(); },
       disabled: selectedRows.size === 0,
@@ -766,17 +780,16 @@
 
     actionMenuItems = items;
 
-    const harOrgnr = result !== null && result.columns.includes("orgnr");
     mailMenuItems = [
       {
         label: selectedRows.size > 0 ? `Skapa brevsäck från markerade (${selectedRows.size})` : "Skapa brevsäck från markerade",
         action: () => oppnaSackDialog("ny"),
-        disabled: !harOrgnr || selectedRows.size === 0,
+        disabled: selectedRows.size === 0,
       },
       {
         label: "Lägg till i brevsäck",
         action: () => oppnaSackDialog("befintlig"),
-        disabled: !harOrgnr || selectedRows.size === 0,
+        disabled: selectedRows.size === 0,
       },
     ];
 
@@ -1087,6 +1100,11 @@
     </div>
   {/if}
 
+  <!-- Dashboard (visas när ingen sökning gjorts) -->
+  {#if !result && !error && showDashboard && aiMode !== 'chat'}
+    <DashboardPanel {dbPath} />
+  {/if}
+
   <!-- Resultat -->
   {#if aiMode !== 'chat' && error}
     <div class="px-4 py-3 text-sm text-red-400 font-mono">{error}</div>
@@ -1127,17 +1145,29 @@
                   <div class="mt-1 border border-transparent rounded flex items-stretch aspect-square" style="height: 1.375rem; margin-left: -1px">
                   <div
                     class="flex-1 rounded-sm border-2 flex items-center justify-center cursor-pointer transition-colors
-                      {allSelected ? 'bg-white border-white' : someSelected ? 'border-zinc-400' : 'border-zinc-600 hover:border-zinc-400'}"
+                      {allSelected ? 'bg-amber-400 border-amber-400' : pageAllSelected ? 'bg-white border-white' : pageAnySelected ? 'border-zinc-400' : 'border-zinc-600 hover:border-zinc-400'}"
+                    title={allSelected ? 'Avmarkera alla' : pageAllSelected ? 'Markera alla (' + filteredRows.length + ')' : 'Markera sidan'}
                     onclick={() => {
-                      if (allSelected) selectedRows = new Set();
-                      else selectedRows = new Set(filteredRows.map(r => r.i));
+                      if (allSelected) {
+                        selectedRows = new Set();
+                      } else if (pageAllSelected) {
+                        selectedRows = new Set(filteredRows.map(r => r.i));
+                      } else {
+                        const s = new Set(selectedRows);
+                        pagedRows.forEach(r => s.add(r.i));
+                        selectedRows = s;
+                      }
                     }}
                   >
                     {#if allSelected}
                       <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                         <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                       </svg>
-                    {:else if someSelected}
+                    {:else if pageAllSelected}
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                        <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {:else if pageAnySelected}
                       <svg width="8" height="2" viewBox="0 0 8 2" fill="none">
                         <line x1="1" y1="1" x2="7" y2="1" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round"/>
                       </svg>
@@ -1289,15 +1319,18 @@
 </div>
 
 {#if !searchVisible && aiQuery.trim()}
-  <div class="fixed z-30 left-1/2 flex items-center gap-1.5 select-none pointer-events-none text-xs" style="top:20px; transform:translate(-50%,-50%);">
-    <span class="text-zinc-500">Söktext</span>
-    <span class="inline-flex items-center" style="font-size:15px; letter-spacing:-0.1em">
-      <span class="chevron-pulse" style="color:#ff3366; animation-delay:0s;   text-shadow:0 0 7px #ff3366">›</span>
-      <span class="chevron-pulse" style="color:#ffcc00; animation-delay:0.3s; text-shadow:0 0 7px #ffcc00">›</span>
-      <span class="chevron-pulse" style="color:#00ff88; animation-delay:0.6s; text-shadow:0 0 7px #00ff88">›</span>
-    </span>
-    <span class="text-zinc-400">{aiQuery.trim().slice(0, 50)}{aiQuery.trim().length > 50 ? '…' : ''}</span>
-  </div>
+  <button
+    class="fixed z-30 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-700 bg-zinc-900/90 backdrop-blur text-xs text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors cursor-pointer select-none"
+    style="top:20px; transform:translate(-50%,-50%)"
+    onclick={() => searchVisible = true}
+    title="Klicka för att visa sökfältet"
+  >
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" class="text-zinc-500 shrink-0">
+      <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M10 10l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    <span class="max-w-xs truncate">{aiQuery.trim().slice(0, 60)}{aiQuery.trim().length > 60 ? '…' : ''}</span>
+  </button>
 {/if}
 
 {#if quickSaveOpen && quickSavePopoverPos}
@@ -1499,8 +1532,11 @@
             {/if}
           </div>
         {/if}
-        <div class="flex justify-end">
-          <button onclick={() => { sackDialog = null; sackResult = null; }} class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded cursor-pointer transition-colors">Stäng</button>
+        <div class="flex justify-end gap-2">
+          <button onclick={() => { sackDialog = null; sackResult = null; }} class="px-3 py-1.5 text-xs text-zinc-400 hover:text-white cursor-pointer transition-colors">Stäng</button>
+          {#if onOpenMail}
+            <button onclick={() => { sackDialog = null; sackResult = null; onOpenMail!(); }} class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded hover:bg-zinc-200 cursor-pointer transition-colors">Gå till utskick</button>
+          {/if}
         </div>
       {:else if sackDialog === "ny"}
         <h2 class="text-sm font-medium text-zinc-200 mb-1">Skapa brevsäck</h2>
@@ -1547,15 +1583,6 @@
 <style>
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { scrollbar-width: none; }
-
-  @keyframes chevron-pulse {
-    0%, 100% { opacity: 0.4; }
-    50%       { opacity: 1; }
-  }
-  .chevron-pulse {
-    animation: chevron-pulse 1.6s ease-in-out infinite;
-    letter-spacing: 0.05em;
-  }
 
   @keyframes ai-spin {
     to { transform: rotate(360deg); }

@@ -417,6 +417,32 @@ async fn save_file_binary(filename: String, data: String) -> Result<(), String> 
 const AI_PROXY_URL: &str = "https://fr-ai-proxy.tubbs.workers.dev";
 const AI_PROXY_SECRET: &str = "MiffPiffRufsig23Katt";
 
+#[derive(serde::Serialize)]
+struct DbStats {
+    total: i64,
+    med_email: i64,
+    med_webbadress: i64,
+    med_arsredovisning: i64,
+    med_koordinater: i64,
+    generated_at: String,
+}
+
+#[tauri::command]
+fn get_db_stats(db_path: String) -> Result<DbStats, String> {
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    let mut s = DbStats {
+        total: 0, med_email: 0, med_webbadress: 0,
+        med_arsredovisning: 0, med_koordinater: 0, generated_at: String::new(),
+    };
+    conn.query_row("SELECT COUNT(*) FROM bolag WHERE aktiv = 1", [], |r| r.get(0)).map(|v| s.total = v).ok();
+    conn.query_row("SELECT COUNT(*) FROM bolag WHERE aktiv = 1 AND email != ''", [], |r| r.get(0)).map(|v| s.med_email = v).ok();
+    conn.query_row("SELECT COUNT(*) FROM bolag WHERE aktiv = 1 AND webbadress != ''", [], |r| r.get(0)).map(|v| s.med_webbadress = v).ok();
+    conn.query_row("SELECT COUNT(*) FROM bolag WHERE aktiv = 1 AND ar_year IS NOT NULL", [], |r| r.get(0)).map(|v| s.med_arsredovisning = v).ok();
+    conn.query_row("SELECT COUNT(*) FROM bolag WHERE aktiv = 1 AND lat IS NOT NULL AND lat != 0", [], |r| r.get(0)).map(|v| s.med_koordinater = v).ok();
+    conn.query_row("SELECT generated_at FROM metadata LIMIT 1", [], |r| r.get(0)).map(|v| s.generated_at = v).ok();
+    Ok(s)
+}
+
 #[tauri::command]
 fn get_os() -> &'static str {
     std::env::consts::OS
@@ -1094,6 +1120,7 @@ pub fn run() {
         .manage(CancelSet(std::sync::Mutex::new(std::collections::HashSet::new())))
         .invoke_handler(tauri::generate_handler![
             verify_license,
+            get_db_stats,
             check_manifest,
             download_db,
             query_db,

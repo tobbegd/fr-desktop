@@ -137,6 +137,13 @@
       const isAuthError = msg.includes("401")
         || msg.toLowerCase().includes("prenumeration")
         || msg.toLowerCase().includes("ogiltig");
+      if (isAuthError) {
+        await savePrefs({ apiKey: "", email: "", tier: "", offlineLogins: 0 });
+        apiKey = ""; email = ""; tier = ""; offlineLogins = 0;
+        statusMsg = "Kontot hittades inte eller API-nyckeln är ogiltig.";
+        view = "auth";
+        return;
+      }
       if (!isAuthError) {
         isOnline = false;
         offlineLogins = Math.min(offlineLogins + 1, OFFLINE_MAX);
@@ -343,6 +350,7 @@
   let mailMenuItems = $state<MenuItem[]>([]);
   let kartaMenuItems = $state<MenuItem[]>([]);
   let showSqlEditor = $state(false);
+  let showDashboard = $state(true);
 
   const appMenus: MenuDef[] = $derived([
     {
@@ -373,6 +381,7 @@
       label: "Fönster",
       items: [
         { label: showSqlEditor ? "Dölj SQL-editor" : "Visa SQL-editor", action: () => { showSqlEditor = !showSqlEditor; } },
+        { label: showDashboard ? "Dölj dashboard" : "Visa dashboard", action: () => { showDashboard = !showDashboard; } },
       ],
     },
   ]);
@@ -440,15 +449,12 @@
       <p class="text-zinc-400 text-sm mb-6">Fortsätt använda Företagsdatabasen genom att skaffa en prenumeration.</p>
       <button
         class="w-full bg-white text-zinc-900 font-medium rounded-lg py-2 text-sm hover:bg-zinc-200 transition-colors cursor-pointer"
-        onclick={() => openUrl(`${serverUrl}/set-password`)}
+        onclick={() => openUrl(`${serverUrl}/set-password?email=${encodeURIComponent(email)}`)}
       >
         Fortsätt efter demotiden
       </button>
     </div>
   </div>
-
-{:else if view === "mail"}
-  <MailPage onClose={() => { view = prevView; }} />
 
 {:else}
   <div class="flex flex-col h-screen bg-zinc-950 text-white">
@@ -558,12 +564,20 @@
     <SearchArea
       {dbPath}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
+      onOpenMail={() => { prevView = view; view = "mail"; }}
       bind:showSqlEditor
+      bind:showDashboard
       bind:actionMenuItems
       bind:mailMenuItems
       bind:kartaMenuItems
       collapseSearch={appearance.collapseSearch}
     />
+
+    {#if view === "mail"}
+      <div class="fixed inset-0 z-50 bg-zinc-950">
+        <MailPage onClose={() => { view = prevView; }} />
+      </div>
+    {/if}
 
     {#if view === "settings"}
       <div class="fixed inset-0 z-50 bg-zinc-950">
