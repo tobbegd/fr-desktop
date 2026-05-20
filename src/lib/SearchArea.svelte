@@ -60,7 +60,7 @@
     aiQuery = mode === 'chat' ? "" : aiQueryByMode[mode];
     aiInfo = "";
     aiInfoSql = "";
-    setTimeout(() => { aiInput?.focus(); }, 0);
+    setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
   }
   let schema = $state<Record<string, string[]>>({});
   let aiExpl = $state<AiExpl>({});
@@ -347,6 +347,25 @@
     copiedTimer = setTimeout(() => { copiedFeedback = ""; }, 2000);
   }
 
+  function onRowClick(e: MouseEvent, i: number) {
+    if (e.shiftKey && lastClickedRow !== null) {
+      const fromPos = filteredRows.findIndex(r => r.i === lastClickedRow);
+      const toPos = filteredRows.findIndex(r => r.i === i);
+      if (fromPos !== -1 && toPos !== -1) {
+        const s = new Set(selectedRows);
+        const start = Math.min(fromPos, toPos);
+        const end = Math.max(fromPos, toPos);
+        filteredRows.slice(start, end + 1).forEach(r => s.add(r.i));
+        selectedRows = s;
+      }
+      return;
+    }
+    const s = new Set(selectedRows);
+    if (s.has(i)) s.delete(i); else s.add(i);
+    selectedRows = s;
+    lastClickedRow = i;
+  }
+
   function onCheckboxDown(e: MouseEvent, i: number) {
     e.preventDefault();
     if (e.shiftKey && lastClickedRow !== null) {
@@ -558,10 +577,13 @@
     // Try inline `...` containing SQL
     const inline = text.match(/`((?:SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)[\s\S]*?)`/i);
     if (inline) return inline[1].trim();
-    // Try a line starting with a SQL keyword
+    // Try a line starting with a SQL keyword — stop at first blank line to avoid grabbing trailing prose
     const lines = text.split("\n");
     const start = lines.findIndex(l => /^\s*(SELECT|WITH|PRAGMA|INSERT|UPDATE|DELETE)\b/i.test(l));
-    if (start !== -1) return lines.slice(start).join("\n").trim();
+    if (start !== -1) {
+      const end = lines.findIndex((l, i) => i > start && l.trim() === "");
+      return lines.slice(start, end === -1 ? undefined : end).join("\n").trim();
+    }
     return "";
   }
 
@@ -593,7 +615,7 @@
       const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
       if (aiMode === "chat") {
         const history = [...chatMessages].reverse();
-        const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery, history));
+        const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery, history, showSqlEditor));
         const answer = raw.trim();
         const answerSql = extractSqlFromText(answer) || null;
         const question = aiQuery;
@@ -654,7 +676,7 @@
       try {
         const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
         const history = [...chatMessages.slice(1)].reverse();
-        const raw = await callAi(buildChatPrompt(schema, question, aiExpl, sql, history));
+        const raw = await callAi(buildChatPrompt(schema, question, aiExpl, sql, history, showSqlEditor));
         const answer = raw.trim();
         const answerSql = extractSqlFromText(answer) || null;
         chatMessages = [{ question, answer, answerSql, ts, corrected: true }, ...chatMessages.slice(1)];
@@ -1070,7 +1092,10 @@
       {#each chatMessages as msg, i}
         <div class="flex flex-col gap-1.5">
           <p class="text-sm text-zinc-500 text-right pr-1 truncate"><span class="text-zinc-700 text-xs mr-1.5">{msg.ts}</span>{msg.question}</p>
-          <div class="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3">
+          <div class="rounded-lg border bg-zinc-900 px-4 py-3 {msg.corrected ? 'border-amber-900/60' : 'border-zinc-700'}">
+            {#if msg.corrected}
+              <p class="text-[11px] text-amber-700 mb-2">↻ självkorrigerad</p>
+            {/if}
             <p class="text-[15px] text-zinc-300 whitespace-pre-wrap leading-relaxed">{msg.answer}</p>
           </div>
           {#if msg.answerSql}
@@ -1080,12 +1105,12 @@
                   bind:this={latestSqlBtn}
                   onclick={() => runChatSuggestion(fixSql(msg.answerSql!), !msg.corrected)}
                   class="px-3 py-0.5 text-xs rounded-full border border-transparent bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 focus:border-emerald-500 focus:outline-none transition-colors cursor-pointer select-none"
-                >Kör SQL-förslag</button>
+                >Kör AI:s förslag</button>
               {:else}
                 <button
                   onclick={() => runChatSuggestion(fixSql(msg.answerSql!), !msg.corrected)}
                   class="px-3 py-0.5 text-xs rounded-full border border-transparent bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 focus:border-emerald-500 focus:outline-none transition-colors cursor-pointer select-none"
-                >Kör SQL-förslag</button>
+                >Kör AI:s förslag</button>
               {/if}
             </div>
           {/if}
@@ -1218,8 +1243,9 @@
             <tbody onmouseenter={() => { if (collapseSearch) searchVisible = false; }}>
               {#each pagedRows as { row, i }}
                 <tr
-                  class="border-b border-zinc-900 select-none transition-colors
-                    {i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
+                  class="border-b border-zinc-900 select-none transition-colors cursor-pointer
+                    {selectedRows.has(i) ? 'bg-zinc-700/40 hover:bg-zinc-700/50' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
+                  onclick={(e) => onRowClick(e, i)}
                   oncontextmenu={(e) => openContextMenu(e, i)}
                   onmouseenter={() => {
                     hoveredRow = i;
@@ -1234,6 +1260,7 @@
                   <td
                     class="px-2 w-8 cursor-pointer"
                     onmousedown={(e) => onCheckboxDown(e, i)}
+                    onclick={(e) => e.stopPropagation()}
                   >
                     <div class="w-3.5 h-3.5 rounded-sm border-2 flex items-center justify-center transition-colors
                       {selectedRows.has(i) ? 'bg-white border-white' : 'border-zinc-600 hover:border-zinc-400'}">

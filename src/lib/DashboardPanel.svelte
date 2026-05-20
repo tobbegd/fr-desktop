@@ -64,7 +64,7 @@
           <div>
             <div class="flex justify-between text-xs mb-1">
               <span class="text-zinc-400">{bar.label}</span>
-              <span class="text-zinc-400">{fmt(bar.value)} <span class="text-zinc-600">({p}%)</span></span>
+              <span class="text-zinc-400">{fmt(bar.value)}</span>
             </div>
             <div class="h-2 bg-zinc-800 rounded-full overflow-hidden">
               <div

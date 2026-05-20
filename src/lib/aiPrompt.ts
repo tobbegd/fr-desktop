@@ -72,7 +72,8 @@ export function buildChatPrompt(
   question: string,
   aiExpl: AiExpl = {},
   currentSql = "",
-  history: { question: string; answer: string }[] = []
+  history: { question: string; answer: string }[] = [],
+  showSqlEditor = false
 ): string {
   const columnGuide = buildColumnGuide(schema, aiExpl);
   const schemaText = Object.entries(schema)
@@ -88,9 +89,14 @@ export function buildChatPrompt(
       history.map(m => `Användare: ${m.question}\nAssistent: ${m.answer}`).join("\n\n") + "\n"
     : "";
 
+  const sqlRunHint = showSqlEditor
+    ? `Om du presenterar ett SQL-förslag, berätta kort att de kan kopiera SQL-koden till SQL-editorn eller klicka på 'Kör AI:s förslag' för att köra den direkt. Skriv detta INNAN kodblocket.`
+    : `Om du presenterar ett SQL-förslag, berätta kort att de kan klicka på 'Kör AI:s förslag' för att köra sökningen direkt. Skriv detta INNAN kodblocket.`;
+
   return `Du är en hjälpassistent inbyggd i en svensk företagsdatabas-app. Du får BARA svara på frågor som rör databasen, dess data, eller hur appen fungerar. Om användaren frågar om något annat ska du artigt förklara att du bara kan hjälpa till med företagsdatabasen.
 
-Svara på svenska med klartext — ingen SQL om det inte specifikt efterfrågas.
+Svara på svenska med klartext — ingen SQL om det inte specifikt efterfrågas. Om du inkluderar SQL, skriv det ALLTID i ett \`\`\`sql kodblock.
+${sqlRunHint}
 
 Tabeller:
 ${schemaText}
