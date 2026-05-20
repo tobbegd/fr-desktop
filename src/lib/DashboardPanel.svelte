@@ -43,7 +43,7 @@
   ] : []);
 </script>
 
-<div class="flex-1 flex items-center justify-center p-8 select-none">
+<div class="flex-1 flex items-center justify-center px-8 pb-[352px] select-none">
   {#if !stats}
     <p class="text-zinc-600 text-sm">Laddar...</p>
   {:else}

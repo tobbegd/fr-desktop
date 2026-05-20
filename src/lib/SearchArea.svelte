@@ -842,7 +842,7 @@
     onmouseenter={() => searchVisible = true}>
     <div class="overflow-hidden">
     <!-- AI-fält -->
-    <div class="px-3 pt-7 pb-5">
+    <div class="px-3 pt-8 pb-5">
       <div class="flex items-center gap-2">
         <!-- Vänster: historik (SQL-läge) / tom (chat-läge) — fast höjd för stabil layout -->
         <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
