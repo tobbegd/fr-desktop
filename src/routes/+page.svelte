@@ -351,6 +351,7 @@
   let kartaMenuItems = $state<MenuItem[]>([]);
   let showSqlEditor = $state(false);
   let showDashboard = $state(true);
+  let searchArea = $state<{ triggerHelp: () => void } | null>(null);
 
   const appMenus: MenuDef[] = $derived([
     {
@@ -382,6 +383,14 @@
       items: [
         { label: showSqlEditor ? "Dölj SQL-editor" : "Visa SQL-editor", action: () => { showSqlEditor = !showSqlEditor; } },
         { label: showDashboard ? "Dölj dashboard" : "Visa dashboard", action: () => { showDashboard = !showDashboard; } },
+      ],
+    },
+    {
+      label: "Hjälp",
+      items: [
+        { label: "Dokumentation", action: () => {}, disabled: true },
+        { separator: true },
+        { label: "Öppna AI-hjälp", action: () => searchArea?.triggerHelp() },
       ],
     },
   ]);
@@ -562,6 +571,7 @@
     {/if}
 
     <SearchArea
+      bind:this={searchArea}
       {dbPath}
       onOpenAiSettings={() => { prevView = view; settingsInitialSection = "ai"; view = "settings"; }}
       onOpenMail={() => { prevView = view; view = "mail"; }}

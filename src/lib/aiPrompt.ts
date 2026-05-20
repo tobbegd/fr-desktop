@@ -67,6 +67,44 @@ export function buildColumnGuide(schema: Record<string, string[]>, aiExpl: AiExp
   return lines.join("\n");
 }
 
+export const APP_HELP_TEXT = `Företagsdatabasen – Desktop
+
+1. SQL-läge (standard)
+Skriv vad du letar efter på vanlig svenska — AI omvandlar det till en SQL-fråga och kör den direkt. Du chattar inte, du söker. Det handlar om att hitta rätt bolag snabbt.
+Exempel:
+  "taxi stockholm med email"         → taxibolag i Stockholm där e-postfältet inte är tomt
+  "restauranger göteborg 50 st"      → 50 restauranger i Göteborg
+  "it-konsulter norrland med webb"   → IT-konsulter i norra Sverige med webbadress
+  "bilverkstäder över 10 anställda"  → verkstäder med minst 10 anställda enligt nyckeltalen
+Växla läge med ctrl+space.
+
+2. Chat-läge
+Ställ frågor och för en dialog med AI:n. Bra för att utforska datan, förstå resultat eller förfina en sökning.
+  "Vilka branscher finns i databasen?"
+  "Hur kan jag filtrera på omsättning?"
+  "Förfina min senaste sökning — lägg till att de ska ha telefon"
+AI:n känner till din aktiva sökning och kan bygga vidare på den. Svaret innehåller ofta ett SQL-förslag du kör direkt med knappen "Kör AI:s förslag".
+
+3. Brevsäckar & mailutskick
+När du har ett sökresultat kan du spara markerade rader (eller hela resultatet) i en brevsäck via Åtgärder-menyn. En brevsäck är en namngiven lista med bolag du vill nå.
+Utskick-fliken i Utskick-menyn låter dig:
+  • Skapa en e-postmall (ämne + brödtext)
+  • Koppla mallen till en brevsäck
+  • Skicka till alla bolag i säcken som har e-postadress
+Utskicken går via SMTP — du konfigurerar din e-postserver under Inställningar → Utskick. Historik och status sparas lokalt.
+
+4. Karta
+Bolag med koordinater (lat/lon) kan visas på karta via Karta-menyn. Nästan alla bolag har minst ortkoordinater.
+  • Visa resultat – plottar hela ditt sökresultat som punkter på kartan.
+  • Visa markerade – visa bara de rader du markerat i tabellen.
+  • Rutt – klicka på ett bolag på kartan för att lägga till det i en rutt. Appen beräknar körordning och visar rutten på kartan — praktiskt för säljbesök.
+  • Kartsökning – rita en polygon direkt på kartan för att avgränsa ett geografiskt område. Sökningen returnerar alla bolag inom det inritade området, oavsett vad som stod i sökfältet.
+
+5. Resultat & markering
+  • Klicka på en rad eller kryssrutan för att markera. Shift+klick markerar ett intervall. Dra i kryssrutan för att markera flera snabbt.
+  • Dubbelklicka på en cell för att kopiera värdet.
+  • Högerklicka för fler alternativ (öppna webbadress, kopiera, exportera m.m.).`;
+
 export function buildChatPrompt(
   schema: Record<string, string[]>,
   question: string,

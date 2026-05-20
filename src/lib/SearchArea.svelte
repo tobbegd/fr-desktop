@@ -11,7 +11,7 @@
   import NyckeltaPanel from "./NyckeltaPanel.svelte";
   import KartaPanel from "./KartaPanel.svelte";
   import { debug } from "$lib/debug.svelte";
-  import { buildSmartPrompt, buildChatPrompt, type AiExpl } from "$lib/aiPrompt";
+  import { buildSmartPrompt, buildChatPrompt, APP_HELP_TEXT, type AiExpl } from "$lib/aiPrompt";
   import { incrementPendingAiCalls } from "$lib/store";
   import type { MenuItem } from "./MenuBar.svelte";
   import DashboardPanel from "./DashboardPanel.svelte";
@@ -54,6 +54,13 @@
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
+  const AI_INPUT_MAX_H = 96; // ~3 rader
+  function resizeAiInput() {
+    if (!aiInput) return;
+    aiInput.style.height = "auto";
+    aiInput.style.height = Math.min(aiInput.scrollHeight, AI_INPUT_MAX_H) + "px";
+  }
+
   function switchMode(mode: "sql" | "chat") {
     aiQueryByMode[aiMode] = aiQuery;
     aiMode = mode;
@@ -62,6 +69,12 @@
     aiInfoSql = "";
     setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
   }
+  export function triggerHelp() {
+    switchMode('chat');
+    aiQuery = "hjälp";
+    setTimeout(() => runAiQuery(), 50);
+  }
+
   let schema = $state<Record<string, string[]>>({});
   let aiExpl = $state<AiExpl>({});
 
@@ -216,6 +229,7 @@
   let result = $state<{ columns: string[]; rows: unknown[][]; truncated: boolean } | null>(null);
   let searchVisible = $state(true);
   $effect(() => { if (!result || !collapseSearch || aiMode === 'chat') searchVisible = true; });
+  $effect(() => { aiQuery; setTimeout(resizeAiInput, 0); });
   $effect(() => { if (result !== null) showDashboard = false; });
   $effect(() => { if (showDashboard) { result = null; error = ""; } });
   let pageSize = $state(200);
@@ -614,6 +628,14 @@
     try {
       const schema = await tauri<Record<string, string[]>>("get_schema", { dbPath });
       if (aiMode === "chat") {
+        if (aiQuery.trim().toLowerCase() === "hjälp") {
+          const ts = new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+          chatMessages = [{ question: "hjälp", answer: APP_HELP_TEXT, answerSql: null, ts }, ...chatMessages];
+          aiQuery = "";
+          aiRunning = false;
+          setTimeout(() => { aiInput?.focus(); }, 0);
+          return;
+        }
         const history = [...chatMessages].reverse();
         const raw = await callAi(buildChatPrompt(schema, aiQuery, aiExpl, sqlQuery, history, showSqlEditor));
         const answer = raw.trim();
@@ -895,8 +917,8 @@
               bind:this={aiInput}
               bind:value={aiQuery}
               placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Sök företag...") : "AI ej konfigurerad — klicka för att konfigurera"}
-              class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px]"
-              style="height: 64px"
+              class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px] overflow-y-auto"
+              style="min-height: 48px; max-height: {AI_INPUT_MAX_H}px;"
               readonly={!aiReady || aiRunning}
               onfocus={() => { aiInputFocused = true; if (!aiReady) onOpenAiSettings(); }}
               onblur={() => { aiInputFocused = false; }}
@@ -904,7 +926,7 @@
                 if (e.key === "Tab") { e.preventDefault(); if (aiMode === 'chat' && latestSqlBtn) { latestSqlBtn.focus(); } else { limitInput?.focus(); limitInput?.select(); } return; }
                 if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); }
               }}
-              oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; }}
+              oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; resizeAiInput(); }}
             ></textarea>
           </div>
           <!-- Bookmark: center=snippets, vänster=snabbspara (animeras hit efter AI-sökning) -->
