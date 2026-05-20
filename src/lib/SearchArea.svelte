@@ -54,11 +54,14 @@
 
   const aiQueryByMode: Record<string, string> = { sql: "", chat: "" };
 
+  const AI_INPUT_MIN_H = 64;
   const AI_INPUT_MAX_H = 96; // ~3 rader
   function resizeAiInput() {
     if (!aiInput) return;
-    aiInput.style.height = "auto";
-    aiInput.style.height = Math.min(aiInput.scrollHeight, AI_INPUT_MAX_H) + "px";
+    aiInput.style.height = "0px";
+    const h = Math.max(AI_INPUT_MIN_H, Math.min(aiInput.scrollHeight, AI_INPUT_MAX_H));
+    aiInput.style.height = h + "px";
+    aiInput.style.overflowY = h >= AI_INPUT_MAX_H ? "auto" : "hidden";
   }
 
   function switchMode(mode: "sql" | "chat") {
@@ -917,8 +920,8 @@
               bind:this={aiInput}
               bind:value={aiQuery}
               placeholder={aiReady ? (aiMode === 'chat' ? "Ställ en fråga..." : "Sök företag...") : "AI ej konfigurerad — klicka för att konfigurera"}
-              class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px] overflow-y-auto"
-              style="min-height: 48px; max-height: {AI_INPUT_MAX_H}px;"
+              class="ai-glow-input w-full px-3 py-3 placeholder-zinc-600 focus:outline-none resize-none leading-relaxed text-[15px]"
+              style="min-height: 64px; max-height: {AI_INPUT_MAX_H}px; transition: height 0.1s ease;"
               readonly={!aiReady || aiRunning}
               onfocus={() => { aiInputFocused = true; if (!aiReady) onOpenAiSettings(); }}
               onblur={() => { aiInputFocused = false; }}
