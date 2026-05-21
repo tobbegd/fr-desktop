@@ -297,6 +297,8 @@
     });
   });
 
+  let visibleIndicators = $state(new Set(ROW_INDICATORS.map(i => i.key)));
+
   const hasColFilters = $derived(Object.values(colFilters).some(v => v !== ""));
   const allSelected = $derived(filteredRows.length > 0 && filteredRows.every(({i}) => selectedRows.has(i)));
   const someSelected = $derived(selectedRows.size > 0 && !allSelected);
@@ -1226,6 +1228,26 @@
                   </div>
                   </div>
                 </th>
+                <th class="sticky top-0 px-1 bg-zinc-950 border-b border-zinc-800 z-10 select-none">
+                  <span class="flex gap-0.5 text-xs items-center">
+                    {#each ROW_INDICATORS as ind}
+                      {#if visibleIndicators.has(ind.key)}
+                        <span
+                          class="cursor-pointer opacity-30 hover:opacity-60 transition-opacity"
+                          title="Dölj {ind.label}"
+                          onclick={() => { const s = new Set(visibleIndicators); s.delete(ind.key); visibleIndicators = s; }}
+                        >{ind.icon}</span>
+                      {:else}
+                        <span
+                          class="cursor-pointer opacity-20 hover:opacity-50 transition-opacity text-zinc-400 leading-none"
+                          style="font-size:6px"
+                          title="Visa {ind.label}"
+                          onclick={() => { const s = new Set(visibleIndicators); s.add(ind.key); visibleIndicators = s; }}
+                        >●</span>
+                      {/if}
+                    {/each}
+                  </span>
+                </th>
                 {#each result.columns as col}
                   {#if !hiddenCols.has(col)}
                   <th
@@ -1296,6 +1318,17 @@
                         </svg>
                       {/if}
                     </div>
+                  </td>
+                  <td class="px-1 whitespace-nowrap" onclick={(e) => e.stopPropagation()}>
+                    <span class="flex gap-0.5 text-xs">
+                      {#each ROW_INDICATORS as ind}
+                        {#if visibleIndicators.has(ind.key)}
+                          {@const idx = result.columns.indexOf(ind.key)}
+                          {@const active = idx !== -1 && row[idx] !== null && row[idx] !== undefined && row[idx] !== ""}
+                          <span class="transition-opacity {active ? 'opacity-70' : 'opacity-10'}" title={active ? ind.label : ''}>{ind.icon}</span>
+                        {/if}
+                      {/each}
+                    </span>
                   </td>
                   {#each result.columns as col, colIdx}
                     {#if !hiddenCols.has(col)}
