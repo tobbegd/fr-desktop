@@ -14,7 +14,8 @@
       {
         "title": "FDB-Desktop v0.1.5",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "backgroundColor": "#09090b"
       }
     ],
     "security": {

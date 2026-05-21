@@ -5,6 +5,21 @@
   --editor-font-size: 14px;
 }
 
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 @keyframes snippet-pulse {
   0%, 100% { border-color: rgb(249 115 22); box-shadow: 0 0 0 0 rgba(249,115,22,0); }
   50% { border-color: rgb(251 146 60); box-shadow: 0 0 6px 2px rgba(249,115,22,0.5); }

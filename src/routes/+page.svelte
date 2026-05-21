@@ -22,6 +22,7 @@
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
+  let initialized = $state(false);
   let settingsInitialSection = $state("general");
   let serverUrl = $state(import.meta.env.VITE_SERVER_URL ?? (import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se"));
   let apiKey = $state("");
@@ -82,6 +83,7 @@
 
     if (p.apiKey) {
       view = "main";
+      initialized = true;
 
       const pending = p.pendingAiCalls ?? 0;
       if (pending > 0) {
@@ -116,6 +118,7 @@
         }
       }
     }
+    initialized = true;
   });
 
   async function verifyInBackground(url: string, key: string) {
@@ -404,7 +407,7 @@
 
 {#if debug.console}<DebugConsole />{/if}
 
-{#if view === "auth"}
+{#if !initialized}{:else if view === "auth"}
   <div class="flex items-center justify-center h-screen bg-zinc-950">
     <div class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-xl p-8 shadow-2xl">
       <div class="flex items-center justify-between mb-1">

@@ -70,6 +70,7 @@
     aiQuery = mode === 'chat' ? "" : aiQueryByMode[mode];
     aiInfo = "";
     aiInfoSql = "";
+    if (mode === 'chat') showSnippets = false;
     setTimeout(() => { aiInput?.focus(); aiInput?.select(); }, 0);
   }
   export function triggerHelp() {
@@ -933,7 +934,7 @@
             ></textarea>
           </div>
           <!-- Bookmark: center=snippets, vänster=snabbspara (animeras hit efter AI-sökning) -->
-          {#if !showSqlEditor}
+          {#if !showSqlEditor && aiMode !== 'chat'}
             <div class="absolute top-full left-0 right-0 z-10" style="height:0; overflow:visible;">
               {#if quickSaveActive}
                 {#key quickSaveKey}
@@ -1265,7 +1266,7 @@
                 {/each}
               </tr>
             </thead>
-            <tbody onmouseenter={() => { if (collapseSearch) searchVisible = false; }}>
+            <tbody onmouseenter={() => { if (collapseSearch) { searchVisible = false; showSnippets = false; } }}>
               {#each pagedRows as { row, i }}
                 <tr
                   class="border-b border-zinc-900 select-none transition-colors cursor-pointer
