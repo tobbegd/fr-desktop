@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Kopiera den här filen till build.sh och fyll i nycklarna.
+# build.sh är gitignored och ska aldrig committas.
+set -e
+
+export FR_GITHUB_TOKEN="ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+export FR_UPLOAD_KEY="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# GitHub Actions-release (alla plattformar — rekommenderat):
+#   ./build.sh --github --notes "Vad som är nytt"
+
+# Lokal Linux-release mot produktionsserver:
+#   ./build.sh --upload --notes "Vad som är nytt"
+
+# Lokal Linux-release mot lokal server (test, ingen uppladdning):
+#   ./build.sh --notes "Test"
+
+cargo run -- \
+  "$@"
