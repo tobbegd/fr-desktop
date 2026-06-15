@@ -4,7 +4,7 @@
   import { loadPrefs } from "$lib/store";
   import PostaOverlay from "$lib/PostaOverlay.svelte";
 
-  type Template = { id: number; namn: string; amne: string; brodtext: string };
+  type Template = { id: number; namn: string; amne: string; brodtext: string; content_type: string };
   type Sack = { id: number; namn: string; antal: number };
   type Utskick = { id: number; sack_id: number; sack_namn: string; template_id: number; template_namn: string; skapad: string; status: string; fordrojning_sek: number };
 
@@ -90,9 +90,11 @@
         password: p.smtpPassword ?? "",
         fromName: p.smtpFromName ?? "",
         fromEmail: p.smtpFromEmail ?? "",
+        replyTo: p.smtpReplyTo ?? "",
         toEmail: testEmail.trim(),
         amne: tmpl.amne,
         brodtext: tmpl.brodtext,
+        contentType: tmpl.content_type,
       });
       testOk = true;
     } catch (e) {

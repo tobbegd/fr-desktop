@@ -10,6 +10,7 @@
   let password = $state("");
   let fromName = $state("");
   let fromEmail = $state("");
+  let replyTo = $state("");
 
   const BREVO_URL = "https://www.brevo.com";
 
@@ -46,12 +47,13 @@
     if (p.smtpPassword)   password = p.smtpPassword;
     if (p.smtpFromName)   fromName = p.smtpFromName;
     if (p.smtpFromEmail)  fromEmail = p.smtpFromEmail;
+    if (p.smtpReplyTo)    replyTo = p.smtpReplyTo;
   });
 
   async function save() {
     saving = true;
     saved = false;
-    await savePrefs({ smtpHost: host, smtpPort: port, smtpEncryption: encryption, smtpUsername: username, smtpPassword: password, smtpFromName: fromName, smtpFromEmail: fromEmail });
+    await savePrefs({ smtpHost: host, smtpPort: port, smtpEncryption: encryption, smtpUsername: username, smtpPassword: password, smtpFromName: fromName, smtpFromEmail: fromEmail, smtpReplyTo: replyTo });
     saving = false;
     saved = true;
     setTimeout(() => { saved = false; }, 2000);
@@ -156,6 +158,11 @@
     <div>
       <p class="text-xs text-zinc-500 mb-1">E-postadress</p>
       <input bind:value={fromEmail} placeholder="hej@mittforetag.se"
+        class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600" />
+    </div>
+    <div>
+      <p class="text-xs text-zinc-500 mb-1">Reply-to <span class="text-zinc-600">(valfri – dit svar skickas)</span></p>
+      <input bind:value={replyTo} placeholder="svar@mittforetag.se"
         class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600" />
     </div>
   </div>

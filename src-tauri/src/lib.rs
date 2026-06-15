@@ -503,6 +503,7 @@ fn open_mail_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> 
         );
     ").map_err(|e| e.to_string())?;
     conn.execute_batch("ALTER TABLE sackar_bolag ADD COLUMN reklamsparr TEXT NOT NULL DEFAULT ''").ok();
+    conn.execute_batch("ALTER TABLE templates ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'").ok();
     Ok(conn)
 }
 
@@ -614,6 +615,7 @@ struct Template {
     namn: String,
     amne: String,
     brodtext: String,
+    content_type: String,
     skapad: String,
 }
 
@@ -623,14 +625,15 @@ async fn list_templates(app: AppHandle) -> Result<Vec<Template>, String> {
     tokio::task::spawn_blocking(move || {
         let conn = open_mail_db(&path)?;
         let mut stmt = conn.prepare("
-            SELECT id, namn, amne, brodtext, skapad FROM templates ORDER BY skapad DESC
+            SELECT id, namn, amne, brodtext, content_type, skapad FROM templates ORDER BY skapad DESC
         ").map_err(|e| e.to_string())?;
         let result = stmt.query_map([], |row| Ok(Template {
             id: row.get(0)?,
             namn: row.get(1)?,
             amne: row.get(2)?,
             brodtext: row.get(3)?,
-            skapad: row.get(4)?,
+            content_type: row.get(4)?,
+            skapad: row.get(5)?,
         })).map_err(|e| e.to_string())?
         .filter_map(|r| r.ok()).collect();
         Ok(result)
@@ -638,26 +641,26 @@ async fn list_templates(app: AppHandle) -> Result<Vec<Template>, String> {
 }
 
 #[tauri::command]
-async fn create_template(app: AppHandle, namn: String, amne: String, brodtext: String) -> Result<i64, String> {
+async fn create_template(app: AppHandle, namn: String, amne: String, brodtext: String, content_type: String) -> Result<i64, String> {
     let path = get_mail_db_path(&app)?;
     tokio::task::spawn_blocking(move || {
         let conn = open_mail_db(&path)?;
         conn.execute(
-            "INSERT INTO templates (namn, amne, brodtext) VALUES (?1, ?2, ?3)",
-            rusqlite::params![namn, amne, brodtext],
+            "INSERT INTO templates (namn, amne, brodtext, content_type) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![namn, amne, brodtext, content_type],
         ).map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn update_template(app: AppHandle, id: i64, namn: String, amne: String, brodtext: String) -> Result<(), String> {
+async fn update_template(app: AppHandle, id: i64, namn: String, amne: String, brodtext: String, content_type: String) -> Result<(), String> {
     let path = get_mail_db_path(&app)?;
     tokio::task::spawn_blocking(move || {
         let conn = open_mail_db(&path)?;
         conn.execute(
-            "UPDATE templates SET namn = ?1, amne = ?2, brodtext = ?3 WHERE id = ?4",
-            rusqlite::params![namn, amne, brodtext, id],
+            "UPDATE templates SET namn = ?1, amne = ?2, brodtext = ?3, content_type = ?4 WHERE id = ?5",
+            rusqlite::params![namn, amne, brodtext, content_type, id],
         ).map_err(|e| e.to_string())?;
         Ok(())
     }).await.map_err(|e| e.to_string())?
@@ -791,10 +794,11 @@ async fn post_utskick(
     password: String,
     from_name: String,
     from_email: String,
+    reply_to: String,
 ) -> Result<usize, String> {
     let path = get_mail_db_path(&app)?;
 
-    let (bolag, fordrojning_sek, amne, brodtext) = tokio::task::spawn_blocking({
+    let (bolag, fordrojning_sek, amne, brodtext, content_type) = tokio::task::spawn_blocking({
         let path = path.clone();
         move || {
             let conn = open_mail_db(&path)?;
@@ -802,9 +806,9 @@ async fn post_utskick(
                 "SELECT fordrojning_sek, template_id, sack_id FROM utskick WHERE id = ?1",
                 [utskick_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).map_err(|e| e.to_string())?;
-            let (amne, brodtext): (String, String) = conn.query_row(
-                "SELECT amne, brodtext FROM templates WHERE id = ?1",
-                [template_id], |row| Ok((row.get(0)?, row.get(1)?)),
+            let (amne, brodtext, content_type): (String, String, String) = conn.query_row(
+                "SELECT amne, brodtext, content_type FROM templates WHERE id = ?1",
+                [template_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).map_err(|e| e.to_string())?;
             let mut stmt = conn.prepare("
                 SELECT sb.orgnr, sb.orgnamn, sb.email, sb.reklamsparr
@@ -820,7 +824,7 @@ async fn post_utskick(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, String>(3).unwrap_or_default())),
             ).map_err(|e| e.to_string())?
             .filter_map(|r| r.ok()).collect();
-            Ok::<_, String>((bolag, fordrojning_sek, amne, brodtext))
+            Ok::<_, String>((bolag, fordrojning_sek, amne, brodtext, content_type))
         }
     }).await.map_err(|e| e.to_string())??;
 
@@ -849,11 +853,15 @@ async fn post_utskick(
             .replace("{{orgnamn}}", orgnamn)
             .replace("{{orgnr}}", orgnr)
             .replace("{{email}}", email);
-        let msg = Message::builder()
+        let mut builder = Message::builder()
             .from(format!("{} <{}>", from_name, from_email).parse().map_err(|e| format!("Ogiltig avsändaradress: {e}"))?)
-            .to(email.parse().map_err(|e| format!("Ogiltig mottagaradress ({email}): {e}"))?)
+            .to(email.parse().map_err(|e| format!("Ogiltig mottagaradress ({email}): {e}"))?);
+        if !reply_to.is_empty() {
+            builder = builder.reply_to(reply_to.parse().map_err(|e| format!("Ogiltig reply-to: {e}"))?);
+        }
+        let msg = builder
             .subject(fill(&amne))
-            .header(ContentType::TEXT_PLAIN)
+            .header(if content_type == "html" { ContentType::TEXT_HTML } else { ContentType::TEXT_PLAIN })
             .body(fill(&brodtext))
             .map_err(|e| e.to_string())?;
         mailer.send(msg).await.map_err(|e| format!("Kunde inte skicka till {email}: {e}"))?;
@@ -975,9 +983,11 @@ async fn send_utskick_test(
     password: String,
     from_name: String,
     from_email: String,
+    reply_to: String,
     to_email: String,
     amne: String,
     brodtext: String,
+    content_type: String,
 ) -> Result<(), String> {
     let fill = |s: String| -> String {
         s.replace("{{orgnamn}}", "Exempelföretag AB")
@@ -986,11 +996,15 @@ async fn send_utskick_test(
          .replace("{{gatuadress}}", "Exempelgatan 1")
          .replace("{{email}}", &to_email)
     };
-    let email = Message::builder()
+    let mut builder = Message::builder()
         .from(format!("{} <{}>", from_name, from_email).parse().map_err(|e| format!("Ogiltig avsändaradress: {e}"))?)
-        .to(to_email.parse().map_err(|e| format!("Ogiltig mottagaradress: {e}"))?)
+        .to(to_email.parse().map_err(|e| format!("Ogiltig mottagaradress: {e}"))?);
+    if !reply_to.is_empty() {
+        builder = builder.reply_to(reply_to.parse().map_err(|e| format!("Ogiltig reply-to: {e}"))?);
+    }
+    let email = builder
         .subject(fill(amne))
-        .header(ContentType::TEXT_PLAIN)
+        .header(if content_type == "html" { ContentType::TEXT_HTML } else { ContentType::TEXT_PLAIN })
         .body(fill(brodtext))
         .map_err(|e| e.to_string())?;
     let creds = Credentials::new(username, password);

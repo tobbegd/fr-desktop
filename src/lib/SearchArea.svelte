@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke as tauri } from "@tauri-apps/api/core";
+  import { invoke } from "@tauri-apps/api/core";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Store } from "@tauri-apps/plugin-store";
   import SqlEditor from "./SqlEditor.svelte";
@@ -536,7 +536,7 @@
       const unika = medEmail.filter(d => { if (seen.has(d.orgnr)) return false; seen.add(d.orgnr); return true; });
       const id = await tauri<number>("create_sack", { namn });
       for (const d of unika) {
-        await tauri("add_bolag_to_sack", { sackId: id, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
+        await invoke("add_bolag_to_sack", { sackId: id, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
       }
       sackResult = { tillagda: unika.length, ignorerade: alla.length - medEmail.length, duplikater: medEmail.length - unika.length };
       sackNamn = "";
@@ -564,7 +564,7 @@
         return true;
       });
       for (const d of nya) {
-        await tauri("add_bolag_to_sack", { sackId, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
+        await invoke("add_bolag_to_sack", { sackId, orgnr: d.orgnr, orgnamn: d.orgnamn, email: d.email, reklamsparr: d.reklamsparr });
       }
       sackResult = { tillagda: nya.length, ignorerade: alla.length - medEmail.length, duplikater: medEmail.length - nya.length };
     } catch (e) {

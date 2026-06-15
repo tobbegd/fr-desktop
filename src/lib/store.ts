@@ -29,6 +29,7 @@ export interface Prefs {
   smtpPassword: string;
   smtpFromName: string;
   smtpFromEmail: string;
+  smtpReplyTo: string;
   tableFontSize: number;
   editorFontSize: number;
   collapseSearch: boolean;
@@ -57,6 +58,7 @@ const defaults: Prefs = {
   smtpPassword: "",
   smtpFromName: "",
   smtpFromEmail: "",
+  smtpReplyTo: "",
   tableFontSize: 12,
   editorFontSize: 14,
   collapseSearch: true,

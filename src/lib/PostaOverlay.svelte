@@ -60,6 +60,7 @@
         password: p.smtpPassword ?? "",
         fromName: p.smtpFromName ?? "",
         fromEmail: p.smtpFromEmail ?? "",
+        replyTo: p.smtpReplyTo ?? "",
       });
       if (!avbruten) klart = true;
       info = await invoke<UtskickInfo>("get_utskick_info", { utskickId: utskick.id });

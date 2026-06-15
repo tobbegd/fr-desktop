@@ -1,8 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { loadPrefs } from "$lib/store";
 
-  type Template = { id: number; namn: string; amne: string; brodtext: string; skapad: string };
+  type Template = { id: number; namn: string; amne: string; brodtext: string; content_type: string; skapad: string };
 
   type Props = { navigateId?: number | null; onNavigated?: () => void };
   let { navigateId = null, onNavigated }: Props = $props();
@@ -11,6 +12,42 @@
   let selected = $state<Template | null>(null);
   let sparar = $state(false);
   let sparat = $state(false);
+
+  let testEmail = $state("");
+  let testSkickar = $state(false);
+  let testFel = $state("");
+  let testOk = $state(false);
+
+  async function skickaTest() {
+    if (!selected || !testEmail.trim()) return;
+    testFel = "";
+    testOk = false;
+    testSkickar = true;
+    try {
+      const p = await loadPrefs();
+      if (!p.smtpHost) throw new Error("SMTP ej konfigurerat. Gå till Inställningar.");
+      await invoke("send_utskick_test", {
+        host: p.smtpHost,
+        port: p.smtpPort ?? 587,
+        encryption: p.smtpEncryption ?? "starttls",
+        username: p.smtpUsername ?? "",
+        password: p.smtpPassword ?? "",
+        fromName: p.smtpFromName ?? "",
+        fromEmail: p.smtpFromEmail ?? "",
+        replyTo: p.smtpReplyTo ?? "",
+        toEmail: testEmail.trim(),
+        amne: selected.amne,
+        brodtext: selected.brodtext,
+        contentType: selected.content_type,
+      });
+      testOk = true;
+      setTimeout(() => { testOk = false; }, 3000);
+    } catch (e) {
+      testFel = String(e);
+    } finally {
+      testSkickar = false;
+    }
+  }
 
   const PLATSHALLARE = ["{{orgnamn}}", "{{orgnr}}", "{{postort}}", "{{bransch}}"];
   const brodtextPlaceholder = "Skriv din text här. Använd platshållare som {{orgnamn}} för personalisering.";
@@ -25,7 +62,7 @@
   }
 
   function nyTemplate() {
-    selected = { id: 0, namn: "Ny template", amne: "", brodtext: "", skapad: "" };
+    selected = { id: 0, namn: "Ny template", amne: "", brodtext: "", content_type: "text", skapad: "" };
     sparat = false;
   }
 
@@ -38,6 +75,7 @@
           namn: selected.namn,
           amne: selected.amne,
           brodtext: selected.brodtext,
+          contentType: selected.content_type,
         });
         selected = { ...selected, id };
       } else {
@@ -46,6 +84,7 @@
           namn: selected.namn,
           amne: selected.amne,
           brodtext: selected.brodtext,
+          contentType: selected.content_type,
         });
       }
       await ladda();
@@ -127,6 +166,20 @@
             class="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
           />
         </div>
+        <div>
+          <label class="text-xs text-zinc-500 block mb-1">Format</label>
+          <div class="flex gap-1">
+            {#each [{ value: "text", label: "Plaintext" }, { value: "html", label: "HTML" }] as opt}
+              <button
+                onclick={() => { if (selected) selected.content_type = opt.value; }}
+                class="px-3 py-1 text-xs rounded transition-colors cursor-pointer
+                  {selected?.content_type === opt.value
+                    ? 'bg-zinc-200 text-zinc-900 font-medium'
+                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'}"
+              >{opt.label}</button>
+            {/each}
+          </div>
+        </div>
         <div class="flex-1 flex flex-col">
           <div class="flex items-center justify-between mb-1">
             <label class="text-xs text-zinc-500">Brödtext</label>
@@ -146,12 +199,33 @@
           ></textarea>
         </div>
       </div>
-      <div class="border-t border-zinc-800 px-5 py-3">
+      <div class="border-t border-zinc-800 px-5 py-3 flex items-center gap-3 flex-wrap">
         <button
           onclick={spara}
           disabled={sparar}
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
         >{sparar ? "Sparar..." : sparat ? "Sparat ✓" : "Spara"}</button>
+
+        <div class="flex items-center gap-2">
+          <input
+            bind:value={testEmail}
+            placeholder="Testadress..."
+            type="email"
+            onkeydown={(e) => e.key === "Enter" && skickaTest()}
+            class="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 w-48"
+          />
+          <button
+            onclick={skickaTest}
+            disabled={testSkickar || !testEmail.trim()}
+            class="px-3 py-1.5 text-xs bg-zinc-800 text-zinc-200 rounded hover:bg-zinc-700 transition-colors cursor-pointer disabled:opacity-40"
+          >{testSkickar ? "Skickar..." : "Skicka test"}</button>
+          {#if testOk}
+            <span class="text-xs text-green-400">Skickat ✓</span>
+          {/if}
+          {#if testFel}
+            <span class="text-xs text-red-400">{testFel}</span>
+          {/if}
+        </div>
       </div>
     {:else}
       <div class="flex-1 flex items-center justify-center">
