@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  const tauri = invoke;
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Store } from "@tauri-apps/plugin-store";
   import SqlEditor from "./SqlEditor.svelte";
