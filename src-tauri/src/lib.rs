@@ -455,6 +455,11 @@ fn quit(app: AppHandle) {
 
 // ---- Mail DB ----
 
+fn sanitize_email(email: &str) -> String {
+    // Strip anything after the first non-email character (e.g. scraped HTML like {"target":"_blank"})
+    email.trim().chars().take_while(|&c| !matches!(c, '{' | '}' | '<' | '>' | ' ' | '\t' | '\n')).collect()
+}
+
 fn get_mail_db_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(data_dir.join("mailutskick.db"))
@@ -586,6 +591,7 @@ async fn list_sack_bolag(app: AppHandle, sack_id: i64) -> Result<Vec<SackBolag>,
 #[tauri::command]
 async fn add_bolag_to_sack(app: AppHandle, sack_id: i64, orgnr: String, orgnamn: String, email: String, reklamsparr: String) -> Result<(), String> {
     let path = get_mail_db_path(&app)?;
+    let email = sanitize_email(&email);
     tokio::task::spawn_blocking(move || {
         let conn = open_mail_db(&path)?;
         conn.execute(
@@ -849,10 +855,11 @@ async fn post_utskick(
             return Ok(i);
         }
 
+        let email = sanitize_email(email);
         let fill = |s: &str| s
             .replace("{{orgnamn}}", orgnamn)
             .replace("{{orgnr}}", orgnr)
-            .replace("{{email}}", email);
+            .replace("{{email}}", &email);
         let mut builder = Message::builder()
             .from(format!("{} <{}>", from_name, from_email).parse().map_err(|e| format!("Ogiltig avsändaradress: {e}"))?)
             .to(email.parse().map_err(|e| format!("Ogiltig mottagaradress ({email}): {e}"))?);

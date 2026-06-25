@@ -13,6 +13,7 @@
   let bolag = $state<SackBolag[]>([]);
   let nyttNamn = $state("");
   let skaparSack = $state(false);
+  let sok = $state("");
 
   async function ladda() {
     sackar = await invoke<Sack[]>("list_sackar");
@@ -23,8 +24,18 @@
 
   async function laddaBolag(s: Sack) {
     selected = s;
+    sok = "";
     bolag = await invoke<SackBolag[]>("list_sack_bolag", { sackId: s.id });
   }
+
+  let filtreradBolag = $derived(
+    sok.trim()
+      ? bolag.filter(b => {
+          const q = sok.trim().toLowerCase();
+          return b.orgnamn.toLowerCase().includes(q) || b.email.toLowerCase().includes(q) || b.orgnr.includes(q);
+        })
+      : bolag
+  );
 
   async function skapaSack() {
     const namn = nyttNamn.trim();
@@ -108,12 +119,19 @@
   <!-- Höger: bolag i vald säck -->
   <div class="flex-1 flex flex-col overflow-hidden">
     {#if selected}
-      <div class="px-5 py-3 border-b border-zinc-800">
-        <p class="text-sm font-medium text-zinc-200">{selected.namn}</p>
-        <p class="text-xs text-zinc-500">{bolag.length} bolag</p>
+      <div class="px-5 py-3 border-b border-zinc-800 flex items-center gap-3">
+        <div>
+          <p class="text-sm font-medium text-zinc-200">{selected.namn}</p>
+          <p class="text-xs text-zinc-500">{bolag.length} bolag{sok.trim() && filtreradBolag.length !== bolag.length ? ` · ${filtreradBolag.length} träffar` : ""}</p>
+        </div>
+        <input
+          bind:value={sok}
+          placeholder="Sök..."
+          class="ml-auto w-36 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+        />
       </div>
       <div class="flex-1 overflow-y-auto">
-        {#each bolag as b}
+        {#each filtreradBolag as b}
           <div class="flex items-center justify-between px-5 py-2.5 border-b border-zinc-800/50 bg-zinc-900/40 group">
             <div>
               <p class="text-sm text-zinc-200">{b.orgnamn || b.orgnr}</p>
