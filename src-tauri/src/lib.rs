@@ -1,6 +1,7 @@
 use base64::{Engine as _, engine::general_purpose};
 use lettre::{
-    message::header::ContentType, AsyncSmtpTransport, AsyncTransport, Message,
+    message::{header::ContentType, Mailbox},
+    AsyncSmtpTransport, AsyncTransport, Message,
     Tokio1Executor,
     transport::smtp::authentication::Credentials,
 };
@@ -849,6 +850,15 @@ async fn post_utskick(
             .map_err(|e| e.to_string())?.port(port).credentials(creds).build(),
     };
 
+    let from_mailbox: Mailbox = format!("{} <{}>", from_name, from_email)
+        .parse()
+        .map_err(|e| format!("Ogiltig avsändaradress: {e}"))?;
+    let reply_to_mailbox: Option<Mailbox> = if !reply_to.is_empty() {
+        Some(reply_to.parse().map_err(|e| format!("Ogiltig reply-to: {e}"))?)
+    } else {
+        None
+    };
+
     for (i, (orgnr, orgnamn, email, _)) in bolag.iter().enumerate() {
         if cancel_set.0.lock().unwrap().remove(&utskick_id) {
             app.emit("utskick-avbruten", utskick_id).ok();
@@ -860,18 +870,35 @@ async fn post_utskick(
             .replace("{{orgnamn}}", orgnamn)
             .replace("{{orgnr}}", orgnr)
             .replace("{{email}}", &email);
+
+        let to_mailbox: Mailbox = match email.parse() {
+            Ok(m) => m,
+            Err(e) => {
+                app.emit("utskick-fel", format!("Hoppar över {orgnamn}: ogiltig e-post ({email}): {e}")).ok();
+                continue;
+            }
+        };
         let mut builder = Message::builder()
-            .from(format!("{} <{}>", from_name, from_email).parse().map_err(|e| format!("Ogiltig avsändaradress: {e}"))?)
-            .to(email.parse().map_err(|e| format!("Ogiltig mottagaradress ({email}): {e}"))?);
-        if !reply_to.is_empty() {
-            builder = builder.reply_to(reply_to.parse().map_err(|e| format!("Ogiltig reply-to: {e}"))?);
+            .from(from_mailbox.clone())
+            .to(to_mailbox);
+        if let Some(ref rt) = reply_to_mailbox {
+            builder = builder.reply_to(rt.clone());
         }
-        let msg = builder
+        let msg = match builder
             .subject(fill(&amne))
             .header(if content_type == "html" { ContentType::TEXT_HTML } else { ContentType::TEXT_PLAIN })
             .body(fill(&brodtext))
-            .map_err(|e| e.to_string())?;
-        mailer.send(msg).await.map_err(|e| format!("Kunde inte skicka till {email}: {e}"))?;
+        {
+            Ok(m) => m,
+            Err(e) => {
+                app.emit("utskick-fel", format!("Hoppar över {orgnamn}: kunde inte bygga mail: {e}")).ok();
+                continue;
+            }
+        };
+        if let Err(e) = mailer.send(msg).await {
+            app.emit("utskick-fel", format!("Kunde inte skicka till {orgnamn} ({email}): {e}")).ok();
+            continue;
+        }
 
         let orgnr_c = orgnr.clone();
         let path_c = path.clone();

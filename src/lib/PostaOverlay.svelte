@@ -19,6 +19,7 @@
   let progress = $state<Progress | null>(null);
   let fel = $state("");
   let klart = $state(false);
+  let perMailFel = $state<string[]>([]);
 
   let totalAttSkicka = $derived(info ? (hoppaOver ? info.total - info.reklamsparrade : info.total) : 0);
   let kvarAtSkicka = $derived(info ? Math.max(0, totalAttSkicka - info.skickade) : 0);
@@ -37,6 +38,9 @@
         avbryter = false;
       }
     }));
+    unlistens.push(await listen<string>("utskick-fel", (event) => {
+      perMailFel = [...perMailFel, event.payload];
+    }));
   });
 
   onDestroy(() => { unlistens.forEach(u => u()); });
@@ -47,6 +51,7 @@
     avbruten = false;
     skickar = true;
     progress = null;
+    perMailFel = [];
     try {
       const p = await loadPrefs();
       if (!p.smtpHost) throw new Error("SMTP ej konfigurerat. Gå till Inställningar.");
@@ -176,9 +181,19 @@
         </p>
       {/if}
 
-      <!-- Felmeddelande -->
+      <!-- Felmeddelande (fatalt) -->
       {#if fel}
         <p class="text-xs text-red-400 bg-red-950/40 border border-red-800/40 rounded px-3 py-2">{fel}</p>
+      {/if}
+
+      <!-- Per-mail-fel -->
+      {#if perMailFel.length > 0}
+        <div class="bg-red-950/30 border border-red-800/40 rounded px-3 py-2 space-y-1 max-h-32 overflow-y-auto">
+          <p class="text-xs text-red-400 font-medium">{perMailFel.length} hopp{perMailFel.length === 1 ? "ades" : "ades"} över:</p>
+          {#each perMailFel as f}
+            <p class="text-xs text-red-300/80">{f}</p>
+          {/each}
+        </div>
       {/if}
     </div>
 

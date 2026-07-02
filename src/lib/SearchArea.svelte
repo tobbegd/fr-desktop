@@ -48,6 +48,7 @@
   let aiInfoSql = $state("");
   let aiMode = $state<"sql" | "chat">("sql");
   let aiInput = $state<HTMLTextAreaElement | null>(null);
+  let offsetInput = $state<HTMLInputElement | null>(null);
   let limitInput = $state<HTMLInputElement | null>(null);
   let aiInputFocused = $state(false);
   let chatMessages = $state<{ question: string; answer: string; answerSql: string | null; ts: string; corrected?: boolean }[]>([]);
@@ -227,6 +228,7 @@
     return { destroy() { node.removeEventListener("wheel", onWheel); } };
   }
 
+  let aiOffset = $state(0);
   let aiLimit = $state(300);
 
   let running = $state(false);
@@ -666,7 +668,8 @@
         } else if (!isSelectSql(cleaned)) {
           aiError = "AI försökte ändra databasen — det är inte tillåtet. Försök igen.";
         } else {
-          sqlQuery = cleaned;
+          sqlQuery = cleaned.replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim()
+            + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
           addToAiHistory(aiQuery);
           runQuery(true);
           quickSaveActive = true;
@@ -681,7 +684,7 @@
   }
 
   async function runChatSuggestion(sql: string, autoCorrect = true) {
-    sql = sql.replace(/\s+LIMIT\s+\d+\s*$/i, '').trim() + `\nLIMIT ${aiLimit}`;
+    sql = sql.replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim() + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
     running = true;
     error = "";
     result = null;
@@ -930,7 +933,7 @@
               onfocus={() => { aiInputFocused = true; if (!aiReady) onOpenAiSettings(); }}
               onblur={() => { aiInputFocused = false; }}
               onkeydown={(e) => {
-                if (e.key === "Tab") { e.preventDefault(); if (aiMode === 'chat' && latestSqlBtn) { latestSqlBtn.focus(); } else { limitInput?.focus(); limitInput?.select(); } return; }
+                if (e.key === "Tab") { e.preventDefault(); if (aiMode === 'chat' && latestSqlBtn) { latestSqlBtn.focus(); } else { offsetInput?.focus(); offsetInput?.select(); } return; }
                 if (e.key === "Enter" && !e.shiftKey && aiReady && !aiRunning) { e.preventDefault(); runAiQuery(); }
               }}
               oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; resizeAiInput(); }}
@@ -971,11 +974,26 @@
           {/if}
         </div>
 
-        <!-- Höger: limit-väljare (bara i sök-läge) -->
-        <div class="flex-1 flex items-start pt-1 pl-2">
+        <!-- Höger: offset + limit-väljare (bara i sök-läge) -->
+        <div class="flex-1 flex flex-col items-start gap-1.5 pt-1 pl-2">
           {#if aiMode === 'sql'}
           <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-            Antal
+            <span class="w-7 shrink-0">Start</span>
+            <input
+              type="text"
+              value={aiOffset}
+              bind:this={offsetInput}
+              oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (!isNaN(v) && v >= 0) aiOffset = v; }}
+              onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+              onkeydown={(e) => {
+                if (e.key === 'Tab') { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
+                if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+              }}
+              class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+            />
+          </label>
+          <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+            <span class="w-7 shrink-0">Antal</span>
             <input
               type="text"
               value={aiLimit}
