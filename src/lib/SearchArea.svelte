@@ -47,8 +47,10 @@
     'Spara ett sökresultat i en brevsäck via Åtgärder-menyn för att skicka mailutskick senare.',
     'Vill du se och redigera SQL-koden direkt? Slå på "Visa SQL-editor" i menyn Fönster.',
     'Omsättning, resultat och antal anställda finns redan på varje bolag — fråga t.ex. "bolag med omsättning över 10 miljoner". Vill du ha historik över flera år, be om det specifikt, t.ex. "nettoomsättning senaste 3 åren".',
+    'Vill du se alla kolumner som går att söka på? Slå på "Visa SQL-editor" i menyn Fönster och klicka sedan "Visa schema".',
+    'Du kan även bara skriva "visa alla kolumner som går att söka" i chat-läget, så listar AI:n dem direkt i svaret — utan att öppna SQL-editorn.',
   ];
-  let tipIndex = $state(-1);
+  let tipIndex = $state(Math.floor(Math.random() * AI_SEARCH_TIPS.length) - 1);
   let tipsDismissed = $state(false);
   function showNextTip() {
     if (tipsDismissed) return;
@@ -62,7 +64,7 @@
   }
   async function enableTips() {
     tipsDismissed = false;
-    tipIndex = 0;
+    tipIndex = Math.floor(Math.random() * AI_SEARCH_TIPS.length);
     await historyStore?.set("tipsDismissed", false);
     await historyStore?.save();
   }
