@@ -131,9 +131,15 @@ export function buildChatPrompt(
     ? `Om du presenterar ett SQL-förslag, berätta kort att de kan kopiera SQL-koden till SQL-editorn eller klicka på 'Kör AI:s förslag' för att köra den direkt. Skriv detta INNAN kodblocket.`
     : `Om du presenterar ett SQL-förslag, berätta kort att de kan klicka på 'Kör AI:s förslag' för att köra sökningen direkt. Skriv detta INNAN kodblocket.`;
 
+  const refineHint = `VIKTIGT — om användaren frågar hur de kan förbättra, förfina eller bygga vidare på sin sökning (även om frågan innehåller tekniska ord som kolumnnamn, t.ex. "lat/lon"), svara ALLTID i denna ordning och hoppa ALDRIG över steg 1:
+1. Först i klartext: vilka ord eller fraser de kan lägga till direkt i sökfältet för att uppnå samma sak utan SQL — t.ex. en ort, ett antal, "med email"/"med telefon"/"med webbadress", "med karta" (ger bolag med koordinater för Karta-menyn).
+2. Därefter, som en valfri genväg: ett SQL-förslag i kodblock om de hellre kör det direkt.
+Exempel: frågar användaren "hur får jag med lat/lon på min frisörsökning?" ska du svara ungefär "Lägg till 'med karta' i sökfältet, t.ex. 'frisör stockholm med karta' — det ger bolag med koordinater som kan visas på Karta-menyn." och SEDAN eventuellt visa SQL-förslaget.`;
+
   return `Du är en hjälpassistent inbyggd i en svensk företagsdatabas-app. Du får BARA svara på frågor som rör databasen, dess data, eller hur appen fungerar. Om användaren frågar om något annat ska du artigt förklara att du bara kan hjälpa till med företagsdatabasen.
 
 Svara på svenska med klartext — ingen SQL om det inte specifikt efterfrågas. Om du inkluderar SQL, skriv det ALLTID i ett \`\`\`sql kodblock.
+${refineHint}
 ${sqlRunHint}
 
 Tabeller:

@@ -34,6 +34,37 @@
   let showHistory = $state(false);
   let queryHistory = $state<string[]>([]);
   let historyStore: Store | null = null;
+
+  const AI_SEARCH_TIPS = [
+    'Skriv "med email" (eller "med telefon"/"med webbadress") för att bara få bolag där fältet faktiskt finns.',
+    'Ange antal direkt i frågan, t.ex. "50 restauranger i Göteborg", för att styra hur många rader du får.',
+    'Skriv "med karta" i frågan, t.ex. "taxi stockholm med karta", för att få bolag som kan visas på Karta-menyn.',
+    'Växla till chat-läge med Ctrl+Space för att prata med AI:n och förfina en sökning istället för att söka direkt.',
+    'I chat-läge kan du säga "förfina min senaste sökning — lägg till X" så bygger AI:n vidare på föregående resultat.',
+    'Sökresultat kan visas på karta via Karta-menyn — rita en polygon för att avgränsa ett geografiskt område.',
+    'Dra i kryssrutan för att markera flera rader snabbt, eller shift-klicka för att markera ett helt intervall.',
+    'Högerklicka på en rad för fler alternativ: öppna webbadress, kopiera, exportera.',
+    'Spara ett sökresultat i en brevsäck via Åtgärder-menyn för att skicka mailutskick senare.',
+    'Vill du se och redigera SQL-koden direkt? Slå på "Visa SQL-editor" i menyn Fönster.',
+  ];
+  let tipIndex = $state(-1);
+  let tipsDismissed = $state(false);
+  function showNextTip() {
+    if (tipsDismissed) return;
+    tipIndex = (tipIndex + 1) % AI_SEARCH_TIPS.length;
+  }
+  async function dismissTips() {
+    tipsDismissed = true;
+    tipIndex = -1;
+    await historyStore?.set("tipsDismissed", true);
+    await historyStore?.save();
+  }
+  async function enableTips() {
+    tipsDismissed = false;
+    tipIndex = 0;
+    await historyStore?.set("tipsDismissed", false);
+    await historyStore?.save();
+  }
   let blinkSnippet = $state(false);
   let showSchema = $state(false);
   let blinkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,6 +148,7 @@
     historyStore = await Store.load("history.json");
     queryHistory = (await historyStore.get<string[]>("queries")) ?? [];
     aiQueryHistory = (await historyStore.get<string[]>("aiQueries")) ?? [];
+    tipsDismissed = (await historyStore.get<boolean>("tipsDismissed")) ?? false;
   }
 
   async function addToHistory(sql: string) {
@@ -227,9 +259,38 @@
     node.addEventListener("wheel", onWheel, { passive: false });
     return { destroy() { node.removeEventListener("wheel", onWheel); } };
   }
+  function rowscroll(node: HTMLElement, rowHeight: number = 28) {
+    let cooling = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function onWheel(e: WheelEvent) {
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+      // Ett fysiskt hjul-klick kan sprida ut sig över flera wheel-events (upp till
+      // ~150ms mellanrum på vissa system). Scrolla bara på det första i en sådan
+      // "burst" och ignorera resten tills det varit tyst en stund.
+      if (!cooling) {
+        node.scrollTop += Math.sign(e.deltaY) * rowHeight;
+        cooling = true;
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => { cooling = false; }, 150);
+    }
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return { destroy() { node.removeEventListener("wheel", onWheel); clearTimeout(timer); } };
+  }
 
   let aiOffset = $state(0);
   let aiLimit = $state(300);
+
+  let startTipTimer: ReturnType<typeof setTimeout> | undefined;
+  let startTipVisible = $state(false);
+  function startTipEnter() { startTipTimer = setTimeout(() => { startTipVisible = true; }, 700); }
+  function startTipLeave() { clearTimeout(startTipTimer); startTipVisible = false; }
+
+  let antalTipTimer: ReturnType<typeof setTimeout> | undefined;
+  let antalTipVisible = $state(false);
+  function antalTipEnter() { antalTipTimer = setTimeout(() => { antalTipVisible = true; }, 700); }
+  function antalTipLeave() { clearTimeout(antalTipTimer); antalTipVisible = false; }
 
   let running = $state(false);
   let error = $state("");
@@ -874,10 +935,10 @@
     onmouseenter={() => searchVisible = true}>
     <div class="overflow-hidden">
     <!-- AI-fält -->
-    <div class="px-3 pt-8 pb-5">
+    <div class="px-3 pt-12 pb-5">
       <div class="flex items-center gap-2">
         <!-- Vänster: historik (SQL-läge) / tom (chat-läge) — fast höjd för stabil layout -->
-        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto h-[80px] pr-2 no-scrollbar" style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto h-[80px] pr-2 no-scrollbar" use:rowscroll={22} style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
           {#if aiMode === 'sql'}
           <div class="shrink-0 h-4"></div>
           {#each aiQueryHistory as q, idx}
@@ -887,14 +948,14 @@
             >
               <span class="w-2 h-2 shrink-0 transition-all"
                 style="background:{aiHistoryColors[idx]}; box-shadow: 0 0 5px {aiHistoryColors[idx]}"></span>
-              <span class="text-sm text-zinc-600 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
+              <span class="text-base text-zinc-500 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
             </div>
           {/each}
           {/if}
         </div>
 
         <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->
-        <div class="relative w-[44%] group">
+        <div class="relative w-[44%] group" onmouseenter={showNextTip}>
           <!-- Tab centrerad, smälter ihop med textareans kant -->
           <div class="ai-tab absolute left-1/2 -translate-x-1/2 z-10 rounded-t-md"
             class:ai-thinking={aiRunning}
@@ -977,35 +1038,51 @@
         <!-- Höger: offset + limit-väljare (bara i sök-läge) -->
         <div class="flex-1 flex flex-col items-start gap-1.5 pt-1 pl-2">
           {#if aiMode === 'sql'}
-          <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+          <label
+            class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            onmouseenter={startTipEnter}
+            onmouseleave={startTipLeave}
+          >
             <span class="w-7 shrink-0">Start</span>
-            <input
-              type="text"
-              value={aiOffset}
-              bind:this={offsetInput}
-              oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (!isNaN(v) && v >= 0) aiOffset = v; }}
-              onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-              onkeydown={(e) => {
-                if (e.key === 'Tab') { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
-                if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
-              }}
-              class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
-            />
+            <div class="relative">
+              <input
+                type="text"
+                value={aiOffset}
+                bind:this={offsetInput}
+                oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (!isNaN(v) && v >= 0) aiOffset = v; }}
+                onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+                onfocus={startTipLeave}
+                onkeydown={(e) => {
+                  if (e.key === 'Tab') { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
+                  if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+                }}
+                class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+              />
+              <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {startTipVisible ? 'opacity-100' : 'opacity-0'}">Hoppar över de första träffarna. Vill du se nästa omgång bolag (t.ex. träff 301–600) sätter du Start till 300.</span>
+            </div>
           </label>
-          <label class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+          <label
+            class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            onmouseenter={antalTipEnter}
+            onmouseleave={antalTipLeave}
+          >
             <span class="w-7 shrink-0">Antal</span>
-            <input
-              type="text"
-              value={aiLimit}
-              bind:this={limitInput}
-              oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (v > 0) aiLimit = v; }}
-              onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-              onkeydown={(e) => {
-                if (e.key === 'Tab') { e.preventDefault(); aiInput?.focus(); aiInput?.select(); return; }
-                if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
-              }}
-              class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
-            />
+            <div class="relative">
+              <input
+                type="text"
+                value={aiLimit}
+                bind:this={limitInput}
+                oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (v > 0) aiLimit = v; }}
+                onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+                onfocus={antalTipLeave}
+                onkeydown={(e) => {
+                  if (e.key === 'Tab') { e.preventDefault(); aiInput?.focus(); aiInput?.select(); return; }
+                  if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+                }}
+                class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+              />
+              <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {antalTipVisible ? 'opacity-100' : 'opacity-0'}">Hur många bolag sökningen hämtar åt gången. Standard är 300 — höj om du vill ha fler träffar i samma sökning.</span>
+            </div>
           </label>
           {/if}
         </div>
@@ -1019,6 +1096,26 @@
           />
         </div>
       {/if}
+      <div class="flex items-center gap-2 mt-2">
+        <div class="flex-1"></div>
+        <div class="w-[44%] h-10 flex items-start justify-between gap-2 px-1">
+          {#if tipsDismissed}
+            <div class="flex-1"></div>
+            <button
+              onclick={enableTips}
+              class="text-xs text-zinc-800 hover:text-zinc-500 transition-colors cursor-pointer"
+            >Visa tips igen</button>
+          {:else if tipIndex >= 0}
+            <p class="text-sm text-zinc-500 line-clamp-2">💡 {AI_SEARCH_TIPS[tipIndex]}</p>
+            <button
+              onclick={dismissTips}
+              title="Dölj tips"
+              class="text-zinc-700 hover:text-zinc-400 text-xs shrink-0 cursor-pointer"
+            >✕</button>
+          {/if}
+        </div>
+        <div class="flex-1"></div>
+      </div>
       {#if aiError}
         <p class="text-xs text-red-400 mt-1">{aiError}</p>
       {/if}
@@ -1107,7 +1204,7 @@
           {running ? "Kör..." : "Kör"}
         </button>
         {#if showHistory}
-          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl" use:rowscroll={28}>
             <HistoryPanel
               items={queryHistory}
               onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
