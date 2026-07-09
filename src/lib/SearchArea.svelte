@@ -46,6 +46,7 @@
     'Högerklicka på en rad för fler alternativ: öppna webbadress, kopiera, exportera.',
     'Spara ett sökresultat i en brevsäck via Åtgärder-menyn för att skicka mailutskick senare.',
     'Vill du se och redigera SQL-koden direkt? Slå på "Visa SQL-editor" i menyn Fönster.',
+    'Omsättning, resultat och antal anställda finns redan på varje bolag — fråga t.ex. "bolag med omsättning över 10 miljoner". Vill du ha historik över flera år, be om det specifikt, t.ex. "nettoomsättning senaste 3 åren".',
   ];
   let tipIndex = $state(-1);
   let tipsDismissed = $state(false);
@@ -197,6 +198,14 @@
   let quickSaveKey = $state(0);
   let quickSaveAnchorEl = $state<HTMLElement | null>(null);
   let quickSavePopoverPos = $state<{ x: number; y: number } | null>(null);
+
+  let sqlToolbarEl = $state<HTMLElement | null>(null);
+  let sqlDropdownPos = $state<{ x: number; y: number; width: number } | null>(null);
+  function positionSqlDropdown() {
+    if (!sqlToolbarEl) return;
+    const r = sqlToolbarEl.getBoundingClientRect();
+    sqlDropdownPos = { x: r.left, y: r.bottom + 4, width: r.width };
+  }
 
   async function loadSnippetStore() {
     snippetStore = await Store.load("snippets.json");
@@ -1184,17 +1193,22 @@
           />
         </div>
       {/if}
-      <div class="relative flex items-center justify-between">
+      <div class="relative flex items-center justify-between" bind:this={sqlToolbarEl}>
         <div class="flex items-center gap-3">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
           <button
-            onclick={() => { showSchema = !showSchema; showHistory = false; }}
+            onclick={() => { showSchema = !showSchema; showHistory = false; if (showSchema) positionSqlDropdown(); }}
             class="text-xs transition-colors cursor-pointer select-none {showSchema ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showSchema ? "Dölj schema" : "Visa schema"}</button>
           <button
-            onclick={() => { showHistory = !showHistory; showSchema = false; }}
+            onclick={() => { showHistory = !showHistory; showSchema = false; if (showHistory) positionSqlDropdown(); }}
             class="text-xs transition-colors cursor-pointer select-none {showHistory ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
           >{showHistory ? "Dölj historik" : "Historik"}</button>
+          <button
+            onclick={() => { showSqlEditor = false; showHistory = false; showSchema = false; }}
+            title="Dölj SQL-editor"
+            class="text-xs text-zinc-600 hover:text-zinc-300 transition-colors cursor-pointer select-none"
+          >Dölj SQL-editor</button>
         </div>
         <button
           class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded-md hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
@@ -1203,20 +1217,6 @@
         >
           {running ? "Kör..." : "Kör"}
         </button>
-        {#if showHistory}
-          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl" use:rowscroll={28}>
-            <HistoryPanel
-              items={queryHistory}
-              onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
-              onremove={removeFromHistory}
-            />
-          </div>
-        {/if}
-        {#if showSchema}
-          <div class="absolute top-full left-0 z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
-            <SchemaPanel {dbPath} />
-          </div>
-        {/if}
       </div>
       {#if !dbPath}
         <p class="text-xs text-zinc-600">Ingen databas nedladdad ännu.</p>
@@ -1533,6 +1533,30 @@
     </svg>
     <span class="max-w-xs truncate">{aiQuery.trim().slice(0, 60)}{aiQuery.trim().length > 60 ? '…' : ''}</span>
   </button>
+{/if}
+
+{#if showHistory && sqlDropdownPos}
+  <div class="fixed inset-0 z-40" onclick={() => showHistory = false}></div>
+  <div
+    class="fixed z-50 max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+    style="left:{sqlDropdownPos.x}px; top:{sqlDropdownPos.y}px; width:{sqlDropdownPos.width}px;"
+    use:rowscroll={28}
+  >
+    <HistoryPanel
+      items={queryHistory}
+      onselect={(sql) => { sqlQuery = sql; showHistory = false; runQuery(true); }}
+      onremove={removeFromHistory}
+    />
+  </div>
+{/if}
+{#if showSchema && sqlDropdownPos}
+  <div class="fixed inset-0 z-40" onclick={() => showSchema = false}></div>
+  <div
+    class="fixed z-50 max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+    style="left:{sqlDropdownPos.x}px; top:{sqlDropdownPos.y}px; width:{sqlDropdownPos.width}px;"
+  >
+    <SchemaPanel {dbPath} />
+  </div>
 {/if}
 
 {#if quickSaveOpen && quickSavePopoverPos}
