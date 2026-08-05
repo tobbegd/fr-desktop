@@ -101,11 +101,11 @@ EXEMPEL
 )]
 struct Cli {
     /// Sökväg till fr-app-katalogen
-    #[arg(long, default_value = "../fr-app")]
+    #[arg(long, default_value = "..")]
     app_dir: PathBuf,
 
     /// Server-URL att ladda upp till
-    #[arg(long, default_value = "https://foretagsdatabasen.se")]
+    #[arg(long, default_value = "https://foretagsdatabas.se")]
     server: String,
 
     /// Upload-nyckel (Bearer token), krävs vid uppladdning

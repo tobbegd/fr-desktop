@@ -26,13 +26,14 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMzgwNzhGRDQ5QjhCQjUKUldTMWk1dlVqd2M0S3VJcGUxQ01BaTM2eStzcDl4R3pDbXZKemx0MGpPeVJ5V0VzeE1qMWd4M1EK",
       "endpoints": [
-        "https://foretagsdatabas.se/output/desktop/latest.json/output/desktop/latest.json"
+        "https://foretagsdatabas.se/output/desktop/latest.json"
       ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -14,12 +14,11 @@
 
 ```
 fr-desktop/
-├── fr-app/          Svelte + Tauri-appen
-│   ├── src/         Frontend (Svelte/TypeScript)
-│   ├── src-tauri/   Rust backend
-│   └── ...
-├── fr-release/      Release-CLI (detta verktyg)
-└── BUILD.md         Denna fil
+└── fr-app/          Svelte + Tauri-appen
+    ├── src/         Frontend (Svelte/TypeScript)
+    ├── src-tauri/   Rust backend
+    ├── release/     Release-CLI (fr-release)
+    └── BUILD.md     Denna fil
 ```
 
 ---
@@ -36,7 +35,7 @@ Appen pekar mot `http://localhost:8081` (fr-web) i dev-läge.
 För att peka mot annan server:
 
 ```bash
-VITE_SERVER_URL=https://stage.foretagsdatabasen.se bunx tauri dev
+VITE_SERVER_URL=https://stage.foretagsdatabas.se bunx tauri dev
 ```
 
 ---
@@ -61,7 +60,7 @@ Kopiera innehållet i `.key.pub` till `fr-app/src-tauri/tauri.conf.json`:
 "plugins": {
   "updater": {
     "pubkey": "<innehållet i ~/.tauri/fr-app.key.pub>",
-    "endpoints": ["https://foretagsdatabasen.se/desktop/latest.json"]
+    "endpoints": ["https://foretagsdatabas.se/output/desktop/latest.json"]
   }
 }
 ```
@@ -132,7 +131,7 @@ Artefakter hamnar i `fr-app/src-tauri/target/release/bundle/appimage/`:
 | Miljö | Kommando |
 |-------|---------|
 | Produktion (default) | `bunx tauri build` |
-| Staging | `VITE_SERVER_URL=https://stage.foretagsdatabasen.se bunx tauri build` |
+| Staging | `VITE_SERVER_URL=https://stage.foretagsdatabas.se bunx tauri build` |
 | Lokal | `VITE_SERVER_URL=http://localhost:8081 bunx tauri build` |
 
 ---
@@ -149,7 +148,7 @@ Redigera **båda** dessa filer med samma versionsnummer:
 ### 2. Bygg och publicera med fr-release
 
 ```bash
-cd fr-release
+cd fr-app/release
 
 # Sätt upload-nyckeln (finns i config.yaml på servern under upload_key)
 export FR_UPLOAD_KEY=<upload-nyckel>
@@ -188,9 +187,9 @@ Starta fr-web med desktop-katalogen aktiverad (sker automatiskt med default-flag
 
 | Endpoint | Beskrivning |
 |----------|------------|
-| `GET /desktop/latest.json` | Tauri updater läser denna vid varje appstart |
-| `GET /desktop/download/<fil>` | Serverar AppImage-arkivet vid uppdatering |
-| `POST /api/desktop/upload` | Skyddad, används av fr-release |
+| `GET /output/desktop/latest.json` | Tauri updater läser denna vid varje appstart |
+| `GET /output/desktop/download/<fil>` | Serverar AppImage-arkivet vid uppdatering |
+| `POST /api/output/desktop/upload` | Skyddad, används av fr-release |
 
 Upload-nyckeln är densamma som för databas-upload (`upload_key` i `config.yaml`).
 

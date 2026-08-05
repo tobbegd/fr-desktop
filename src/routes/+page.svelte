@@ -24,7 +24,7 @@
   let view = $state<View>("auth");
   let initialized = $state(false);
   let settingsInitialSection = $state("general");
-  let serverUrl = $state(import.meta.env.VITE_SERVER_URL ?? (import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabasen.se"));
+  let serverUrl = $state(import.meta.env.VITE_SERVER_URL ?? (import.meta.env.DEV ? "http://localhost:8081" : "https://foretagsdatabas.se"));
   let apiKey = $state("");
   let email = $state("");
   let tier = $state("");
@@ -338,7 +338,7 @@
       const msg = String(e);
       log(`Verifiering misslyckades: ${msg}`);
       if (msg.includes("402") || msg.toLowerCase().includes("prenumeration")) {
-        statusMsg = "Din prenumeration har gått ut. Förnya på foretagsdatabasen.se.";
+        statusMsg = "Din prenumeration har gått ut. Förnya på foretagsdatabas.se.";
       } else if (msg.includes("401") || msg.toLowerCase().includes("ogiltig")) {
         statusMsg = "Ogiltig API-nyckel.";
       } else {

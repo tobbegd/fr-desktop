@@ -11,13 +11,13 @@ Verktyg för att bygga och publicera fr-app till kunder.
 ./bump-version.sh
 
 # 2. Committa och pusha
-cd ../fr-app && git add -A && git commit -m "Bumpa till $(grep version src-tauri/tauri.conf.json | head -1 | grep -o '[0-9.]*')" && git push && cd ../fr-release
+cd .. && git add -A && git commit -m "Bumpa till $(grep version src-tauri/tauri.conf.json | head -1 | grep -o '[0-9.]*')" && git push && cd release
 
 # 3. Bygg och ladda upp alla plattformar
 ./build.sh --github --notes "Beskriv vad som är nytt"
 
 # 4. Aktivera i fr-web admin
-# → https://foretagsdatabasen.se/admin/desktop
+# → https://foretagsdatabas.se/admin/desktop
 #    Klicka "Aktivera" på det nya bygget
 ```
 
@@ -103,7 +103,7 @@ Mot lokal server (test utan --upload):
 | `--upload` | — | Ladda upp efter lokalt bygge (Linux) |
 | `--upload-key` | `FR_UPLOAD_KEY` | Bearer-token till `/api/output/desktop/upload` |
 | `--notes` | — | Release-text som visas i admin |
-| `--server` | — | Server-URL (default: https://foretagsdatabasen.se) |
+| `--server` | — | Server-URL (default: https://foretagsdatabas.se) |
 | `--no-build` | — | Hoppa över bygget, använd senaste artifact |
 | `--key-path` | — | Sökväg till signeringsnyckel (lokalt läge) |
 
