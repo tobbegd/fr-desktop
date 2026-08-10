@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
-CARGO_TOML="../fr-app/src-tauri/Cargo.toml"
-TAURI_CONF="../fr-app/src-tauri/tauri.conf.json"
-APP_DIR="../fr-app"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$SCRIPT_DIR/.."
+CARGO_TOML="$APP_DIR/src-tauri/Cargo.toml"
+TAURI_CONF="$APP_DIR/src-tauri/tauri.conf.json"
 
 current=$(grep '^version = ' "$CARGO_TOML" | head -1 | sed 's/version = "\(.*\)"/\1/')
 
