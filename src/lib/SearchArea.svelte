@@ -14,6 +14,7 @@
   import { debug } from "$lib/debug.svelte";
   import { buildSmartPrompt, buildChatPrompt, APP_HELP_TEXT, type AiExpl } from "$lib/aiPrompt";
   import { incrementPendingAiCalls } from "$lib/store";
+  import { LAN_LIST } from "$lib/lan";
   import type { MenuItem } from "./MenuBar.svelte";
   import DashboardPanel from "./DashboardPanel.svelte";
 
@@ -292,6 +293,40 @@
 
   let aiOffset = $state(0);
   let aiLimit = $state(300);
+
+  let selectedLan = $state(new Set<string>());
+  let lanDropdownOpen = $state(false);
+  let lanTriggerEl = $state<HTMLButtonElement | null>(null);
+  let lanDropdownPos = $state<{ x: number; y: number } | null>(null);
+  function toggleLanDropdown() {
+    if (!lanDropdownOpen && lanTriggerEl) {
+      const r = lanTriggerEl.getBoundingClientRect();
+      lanDropdownPos = { x: r.left, y: r.bottom + 4 };
+    }
+    lanDropdownOpen = !lanDropdownOpen;
+  }
+  function toggleLan(code: string) {
+    const next = new Set(selectedLan);
+    if (next.has(code)) next.delete(code); else next.add(code);
+    selectedLan = next;
+  }
+  // Lägger till ett sateslän-villkor i AI:ns genererade SQL — kringgår AI:t helt så
+  // valet alltid tillämpas exakt, oavsett hur AI:t tolkar frågan.
+  // Den befintliga WHERE-kroppen omsluts alltid med parenteser innan AND läggs på,
+  // annars kan SQL:ens AND/OR-precedens göra att länfiltret bara gäller sista OR-grenen.
+  function applyLanFilter(sql: string): string {
+    if (selectedLan.size === 0) return sql;
+    const cond = `sateslän IN (${[...selectedLan].map(c => `'${c}'`).join(", ")})`;
+    const clauseMatch = /\b(ORDER BY|GROUP BY)\b/i.exec(sql);
+    const endIdx = clauseMatch ? clauseMatch.index : sql.length;
+    const rest = sql.slice(endIdx);
+    const whereMatch = /\bWHERE\b/i.exec(sql);
+    if (whereMatch) {
+      const body = sql.slice(whereMatch.index + whereMatch[0].length, endIdx).trim();
+      return sql.slice(0, whereMatch.index) + `WHERE (${body}) AND ${cond} ${rest}`;
+    }
+    return sql.slice(0, endIdx).trim() + ` WHERE ${cond} ${rest}`;
+  }
 
   let startTipTimer: ReturnType<typeof setTimeout> | undefined;
   let startTipVisible = $state(false);
@@ -734,14 +769,14 @@
         if (!looksLikeSql(candidate)) {
           candidate = extractSqlFromText(rawTrimmed) || candidate;
         }
-        const cleaned = fixSql(candidate);
+        const cleaned = fixSql(candidate).replace(/;+\s*$/, "").trim();
         if (!looksLikeSql(cleaned)) {
           aiError = "AI returnerade inte giltig SQL. Försök igen eller byt till chat-läge.";
         } else if (!isSelectSql(cleaned)) {
           aiError = "AI försökte ändra databasen — det är inte tillåtet. Försök igen.";
         } else {
-          sqlQuery = cleaned.replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim()
-            + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
+          const withLan = applyLanFilter(cleaned.replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim());
+          sqlQuery = withLan + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
           addToAiHistory(aiQuery);
           runQuery(true);
           quickSaveActive = true;
@@ -756,7 +791,7 @@
   }
 
   async function runChatSuggestion(sql: string, autoCorrect = true) {
-    sql = sql.replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim() + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
+    sql = sql.replace(/;+\s*$/, '').replace(/\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, '').trim() + `\nLIMIT ${aiLimit}${aiOffset > 0 ? ' OFFSET ' + aiOffset : ''}`;
     running = true;
     error = "";
     result = null;
@@ -935,7 +970,7 @@
 
 <svelte:window
   onmouseup={() => dragging = false}
-  onkeydown={(e) => { if (e.key === " " && e.ctrlKey) { e.preventDefault(); switchMode(aiMode === 'sql' ? 'chat' : 'sql'); } }}
+  onkeydown={(e) => { if (e.key === " " && e.ctrlKey) { e.preventDefault(); switchMode(aiMode === 'sql' ? 'chat' : 'sql'); } if (e.key === "Escape" && lanDropdownOpen) lanDropdownOpen = false; }}
 />
 
 <!-- SearchArea fyller återstående höjd i föräldern -->
@@ -1049,29 +1084,46 @@
         <!-- Höger: offset + limit-väljare (bara i sök-läge) -->
         <div class="flex-1 flex flex-col items-start gap-1.5 pt-1 pl-2">
           {#if aiMode === 'sql'}
-          <label
-            class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-            onmouseenter={startTipEnter}
-            onmouseleave={startTipLeave}
-          >
-            <span class="w-7 shrink-0">Start</span>
-            <div class="relative">
-              <input
-                type="text"
-                value={aiOffset}
-                bind:this={offsetInput}
-                oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (!isNaN(v) && v >= 0) aiOffset = v; }}
-                onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-                onfocus={startTipLeave}
-                onkeydown={(e) => {
-                  if (e.key === 'Tab') { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
-                  if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
-                }}
-                class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
-              />
-              <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {startTipVisible ? 'opacity-100' : 'opacity-0'}">Hoppar över de första träffarna. Vill du se nästa omgång bolag (t.ex. träff 301–600) sätter du Start till 300.</span>
-            </div>
-          </label>
+          <div class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+              onmouseenter={startTipEnter}
+              onmouseleave={startTipLeave}
+            >
+              <span class="w-7 shrink-0">Start</span>
+              <div class="relative">
+                <input
+                  type="text"
+                  value={aiOffset}
+                  bind:this={offsetInput}
+                  oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (!isNaN(v) && v >= 0) aiOffset = v; }}
+                  onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+                  onfocus={startTipLeave}
+                  onkeydown={(e) => {
+                    if (e.key === 'Tab') { e.preventDefault(); limitInput?.focus(); limitInput?.select(); return; }
+                    if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+                  }}
+                  class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+                />
+                <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {startTipVisible ? 'opacity-100' : 'opacity-0'}">Hoppar över de första träffarna. Vill du se nästa omgång bolag (t.ex. träff 301–600) sätter du Start till 300.</span>
+              </div>
+            </label>
+
+            <!-- Län-filter — till höger om Start, samma höjd som ett fält -->
+            <button
+              type="button"
+              bind:this={lanTriggerEl}
+              onclick={toggleLanDropdown}
+              class="flex items-center gap-1.5 text-xs rounded border p-1.5 transition-colors cursor-pointer
+                {selectedLan.size > 0 ? 'border-amber-600 bg-amber-950/40 text-amber-300' : 'border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200'}"
+            >
+              <span>Län</span>
+              {#if selectedLan.size > 0}
+                <span class="flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-amber-600 text-[10px] font-medium text-white leading-none">{selectedLan.size}</span>
+              {/if}
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {lanDropdownOpen ? 'rotate-180' : ''}"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
           <label
             class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
             onmouseenter={antalTipEnter}
@@ -1522,19 +1574,29 @@
   {/if}
 </div>
 
-{#if !searchVisible && aiQuery.trim()}
-  <button
-    class="fixed z-30 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-700 bg-zinc-900/90 backdrop-blur text-xs text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors cursor-pointer select-none"
-    style="top:20px; transform:translate(-50%,-50%)"
-    onclick={() => searchVisible = true}
-    title="Klicka för att visa sökfältet"
-  >
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" class="text-zinc-500 shrink-0">
-      <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M10 10l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    </svg>
-    <span class="max-w-xs truncate">{aiQuery.trim().slice(0, 60)}{aiQuery.trim().length > 60 ? '…' : ''}</span>
-  </button>
+{#if !searchVisible && (aiQuery.trim() || selectedLan.size > 0)}
+  <div class="fixed z-30 left-1/2 flex items-center gap-2" style="top:20px; transform:translate(-50%,-50%)">
+    {#if aiQuery.trim()}
+      <button
+        class="flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-700 bg-zinc-900/90 backdrop-blur text-xs text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors cursor-pointer select-none"
+        onclick={() => searchVisible = true}
+        title="Klicka för att visa sökfältet"
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" class="text-zinc-500 shrink-0">
+          <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10 10l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="max-w-xs truncate">{aiQuery.trim().slice(0, 60)}{aiQuery.trim().length > 60 ? '…' : ''}</span>
+      </button>
+    {/if}
+    {#if selectedLan.size > 0}
+      <button
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-amber-700 bg-amber-950/80 backdrop-blur text-xs text-amber-300 hover:border-amber-500 hover:text-amber-100 transition-colors cursor-pointer select-none"
+        onclick={() => searchVisible = true}
+        title="Klicka för att visa sökfältet — länfilter aktivt"
+      >Län: {selectedLan.size}</button>
+    {/if}
+  </div>
 {/if}
 
 {#if showHistory && sqlDropdownPos}
@@ -1558,6 +1620,29 @@
     style="left:{sqlDropdownPos.x}px; top:{sqlDropdownPos.y}px; width:{sqlDropdownPos.width}px;"
   >
     <SchemaPanel {dbPath} />
+  </div>
+{/if}
+
+{#if lanDropdownOpen && lanDropdownPos}
+  <div class="fixed inset-0 z-40" onclick={() => lanDropdownOpen = false}></div>
+  <div
+    class="fixed z-50 w-44 max-h-[70vh] overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl py-1"
+    style="left:{lanDropdownPos.x}px; top:{lanDropdownPos.y}px;"
+  >
+    {#if selectedLan.size > 0}
+      <div class="flex items-center justify-between px-2.5 py-1 border-b border-zinc-800 mb-1">
+        <span class="text-[10px] text-zinc-500">{selectedLan.size} valda</span>
+        <button type="button" onclick={() => selectedLan = new Set()} class="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer">rensa</button>
+      </div>
+    {/if}
+    {#each LAN_LIST as { code, name }}
+      <button
+        type="button"
+        onclick={() => toggleLan(code)}
+        class="w-full text-left px-2.5 py-1.5 text-xs transition-colors cursor-pointer
+          {selectedLan.has(code) ? 'bg-amber-950/40 text-amber-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
+      >{name}</button>
+    {/each}
   </div>
 {/if}
 
