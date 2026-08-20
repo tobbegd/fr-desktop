@@ -821,11 +821,11 @@
     const items: MenuItem[] = [];
     const sel = [...selectedRows];
 
-    // Nyckeltal – kräver exakt 1 markerad rad med ar_year
+    // Nyckeltal – kräver exakt 1 markerad rad med nettoomsattning
     if (sel.length === 1 && result) {
       const meta = getRowMeta(sel[0]);
-      const arYearIdx = result.columns.indexOf("ar_year");
-      const hasAr = arYearIdx !== -1 && result.rows[sel[0]]?.[arYearIdx] != null && result.rows[sel[0]]?.[arYearIdx] !== "";
+      const nettoIdx = result.columns.indexOf("nettoomsattning");
+      const hasAr = nettoIdx !== -1 && result.rows[sel[0]]?.[nettoIdx] != null && result.rows[sel[0]]?.[nettoIdx] !== "";
       const name = meta ? (meta.orgnamn.length > 30 ? meta.orgnamn.slice(0, 30) + "…" : meta.orgnamn) : "";
       items.push(hasAr && meta
         ? { label: `Visa nyckeltal: ${name}`, action: () => { nyckeltaPanel = meta; } }
@@ -1658,8 +1658,8 @@
       (() => {
         const meta = getRowMeta(rowIdx);
         if (!meta) return { label: "Ingen orgnr på denna rad", action: () => {}, disabled: true };
-        const arYearIdx = result?.columns.indexOf("ar_year") ?? -1;
-        const hasArData = arYearIdx !== -1 && result?.rows[rowIdx]?.[arYearIdx] !== null && result?.rows[rowIdx]?.[arYearIdx] !== undefined && result?.rows[rowIdx]?.[arYearIdx] !== "";
+        const nettoIdx = result?.columns.indexOf("nettoomsattning") ?? -1;
+        const hasArData = nettoIdx !== -1 && result?.rows[rowIdx]?.[nettoIdx] !== null && result?.rows[rowIdx]?.[nettoIdx] !== undefined && result?.rows[rowIdx]?.[nettoIdx] !== "";
         const name = meta.orgnamn.length > 35 ? meta.orgnamn.slice(0, 35) + "…" : meta.orgnamn;
         return hasArData
           ? { label: `Visa nyckeltal: ${name}`, action: () => { nyckeltaPanel = meta; } }
