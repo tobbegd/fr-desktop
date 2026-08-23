@@ -45,7 +45,7 @@
               <div class="flex items-baseline gap-2 py-0.5">
                 <span class="text-xs font-mono text-zinc-400 shrink-0">{col}</span>
                 {#if desc}
-                  <span class="text-xs text-zinc-600 truncate">{desc}</span>
+                  <span class="text-xs text-zinc-600">{desc}</span>
                 {/if}
               </div>
             {/each}

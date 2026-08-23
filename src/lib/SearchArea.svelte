@@ -203,11 +203,14 @@
   let quickSavePopoverPos = $state<{ x: number; y: number } | null>(null);
 
   let sqlToolbarEl = $state<HTMLElement | null>(null);
-  let sqlDropdownPos = $state<{ x: number; y: number; width: number } | null>(null);
-  function positionSqlDropdown() {
-    if (!sqlToolbarEl) return;
-    const r = sqlToolbarEl.getBoundingClientRect();
-    sqlDropdownPos = { x: r.left, y: r.bottom + 4, width: r.width };
+  let schemaTriggerEl = $state<HTMLButtonElement | null>(null);
+  let sqlDropdownPos = $state<{ x: number; y: number; right: number; width: number; maxHeight: number } | null>(null);
+  function positionSqlDropdown(el?: HTMLElement | null) {
+    const target = el ?? sqlToolbarEl;
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    const y = r.bottom + 4;
+    sqlDropdownPos = { x: r.left, right: window.innerWidth - r.right, y, width: r.width, maxHeight: window.innerHeight - y - 16 };
   }
 
   async function loadSnippetStore() {
@@ -543,6 +546,53 @@
     const orgnamn = orgnamnIdx !== -1 ? result.rows[rowIdx]?.[orgnamnIdx] : null;
     if (!orgnr) return null;
     return { orgnr: String(orgnr), orgnamn: orgnamn ? String(orgnamn) : String(orgnr) };
+  }
+
+  const INDICATOR_TITLES: Record<string, string> = {
+    nettoomsattning: "Visa nyckeltal",
+    webbadress: "Öppna webbplats",
+    email: "Kopiera e-post",
+    telefon: "Kopiera telefon",
+    lon: "Visa på karta",
+  };
+
+  function onIndicatorClick(key: string, i: number) {
+    if (!result) return;
+    const row = result.rows[i];
+    const val = (col: string) => {
+      const idx = result!.columns.indexOf(col);
+      const v = idx !== -1 ? row[idx] : null;
+      return v !== null && v !== undefined && v !== "" ? v : null;
+    };
+    switch (key) {
+      case "nettoomsattning": {
+        if (val("nettoomsattning") === null) return;
+        const meta = getRowMeta(i);
+        if (meta) nyckeltaPanel = meta;
+        break;
+      }
+      case "webbadress": {
+        const raw = val("webbadress");
+        if (!raw) return;
+        let url = String(raw);
+        if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+        openUrl(url);
+        break;
+      }
+      case "email":
+      case "telefon": {
+        const raw = val(key);
+        if (!raw) return;
+        navigator.clipboard.writeText(String(raw));
+        flashCopied(String(raw));
+        break;
+      }
+      case "lon": {
+        const rows = getKartaRows([i]);
+        if (rows.length > 0) kartaPanel = rows;
+        break;
+      }
+    }
   }
 
   function deleteRow(i: number) {
@@ -1124,29 +1174,43 @@
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {lanDropdownOpen ? 'rotate-180' : ''}"><path d="M6 9l6 6 6-6"/></svg>
             </button>
           </div>
-          <label
-            class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-            onmouseenter={antalTipEnter}
-            onmouseleave={antalTipLeave}
-          >
-            <span class="w-7 shrink-0">Antal</span>
-            <div class="relative">
-              <input
-                type="text"
-                value={aiLimit}
-                bind:this={limitInput}
-                oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (v > 0) aiLimit = v; }}
-                onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-                onfocus={antalTipLeave}
-                onkeydown={(e) => {
-                  if (e.key === 'Tab') { e.preventDefault(); aiInput?.focus(); aiInput?.select(); return; }
-                  if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
-                }}
-                class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
-              />
-              <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {antalTipVisible ? 'opacity-100' : 'opacity-0'}">Hur många bolag sökningen hämtar åt gången. Standard är 300 — höj om du vill ha fler träffar i samma sökning.</span>
-            </div>
-          </label>
+          <div class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+              onmouseenter={antalTipEnter}
+              onmouseleave={antalTipLeave}
+            >
+              <span class="w-7 shrink-0">Antal</span>
+              <div class="relative">
+                <input
+                  type="text"
+                  value={aiLimit}
+                  bind:this={limitInput}
+                  oninput={(e) => { const v = parseInt((e.target as HTMLInputElement).value); if (v > 0) aiLimit = v; }}
+                  onclick={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
+                  onfocus={antalTipLeave}
+                  onkeydown={(e) => {
+                    if (e.key === 'Tab') { e.preventDefault(); aiInput?.focus(); aiInput?.select(); return; }
+                    if (e.key === 'Enter') { e.preventDefault(); if (aiQuery.trim() && aiReady && !aiRunning) runAiQuery(); else aiInput?.focus(); }
+                  }}
+                  class="w-14 bg-transparent border border-zinc-700 hover:border-zinc-500 rounded p-1.5 text-zinc-400 text-center focus:outline-none focus:border-zinc-400 transition-colors"
+                />
+                <span class="pointer-events-none absolute right-full -mr-1 top-1/2 -translate-y-full px-2 py-1 text-xs rounded bg-zinc-800 border border-zinc-700 text-zinc-300 whitespace-nowrap transition-opacity z-50 {antalTipVisible ? 'opacity-100' : 'opacity-0'}">Hur många bolag sökningen hämtar åt gången. Standard är 300 — höj om du vill ha fler träffar i samma sökning.</span>
+              </div>
+            </label>
+
+            <!-- Schema -->
+            <button
+              type="button"
+              bind:this={schemaTriggerEl}
+              onclick={() => { showSchema = !showSchema; showHistory = false; if (showSchema) positionSqlDropdown(schemaTriggerEl); }}
+              class="flex items-center gap-1.5 text-xs rounded border p-1.5 transition-colors cursor-pointer
+                {showSchema ? 'border-zinc-500 bg-zinc-800 text-zinc-200' : 'border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200'}"
+            >
+              <span>Schema</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {showSchema ? 'rotate-180' : ''}"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
           {/if}
         </div>
       </div>
@@ -1250,10 +1314,6 @@
       <div class="relative flex items-center justify-between" bind:this={sqlToolbarEl}>
         <div class="flex items-center gap-3">
           <span class="text-xs text-zinc-600">Ctrl+Enter för att köra</span>
-          <button
-            onclick={() => { showSchema = !showSchema; showHistory = false; if (showSchema) positionSqlDropdown(); }}
-            class="text-xs transition-colors cursor-pointer select-none {showSchema ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
-          >{showSchema ? "Dölj schema" : "Visa schema"}</button>
           <button
             onclick={() => { showHistory = !showHistory; showSchema = false; if (showHistory) positionSqlDropdown(); }}
             class="text-xs transition-colors cursor-pointer select-none {showHistory ? 'text-zinc-200 hover:text-white' : 'text-zinc-600 hover:text-zinc-300'}"
@@ -1495,7 +1555,11 @@
                         {#if visibleIndicators.has(ind.key)}
                           {@const idx = result.columns.indexOf(ind.key)}
                           {@const active = idx !== -1 && row[idx] !== null && row[idx] !== undefined && row[idx] !== ""}
-                          <span class="transition-opacity {active ? 'opacity-70' : 'opacity-10'}" title={active ? ind.label : ''}>{ind.icon}</span>
+                          <span
+                            class="transition-opacity {active ? 'opacity-70 hover:opacity-100 cursor-pointer' : 'opacity-10'}"
+                            title={active ? INDICATOR_TITLES[ind.key] : ''}
+                            onclick={(e) => { if (active) { e.stopPropagation(); onIndicatorClick(ind.key, i); } }}
+                          >{ind.icon}</span>
                         {/if}
                       {/each}
                     </span>
@@ -1616,8 +1680,8 @@
 {#if showSchema && sqlDropdownPos}
   <div class="fixed inset-0 z-40" onclick={() => showSchema = false}></div>
   <div
-    class="fixed z-50 max-h-64 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
-    style="left:{sqlDropdownPos.x}px; top:{sqlDropdownPos.y}px; width:{sqlDropdownPos.width}px;"
+    class="fixed z-50 w-[640px] overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+    style="right:{sqlDropdownPos.right}px; top:{sqlDropdownPos.y}px; max-height:{sqlDropdownPos.maxHeight}px;"
   >
     <SchemaPanel {dbPath} />
   </div>
