@@ -239,6 +239,10 @@ fn build(app_dir: &Path) -> Result<()> {
     println!("→ Bygger fr-app...");
     let status = Command::new("bunx")
         .args(["tauri", "build", "--bundles", "appimage"])
+        // linuxdeploy's strip klarar inte ELF-binärer med .relr.dyn-sektion
+        // (nyare Rust/ld-toolchains). Utan detta kraschar AppImage-bundlingen
+        // med "failed to run linuxdeploy".
+        .env("NO_STRIP", "1")
         .current_dir(app_dir)
         .status()
         .context("Kunde inte starta 'bunx tauri build'")?;

@@ -118,8 +118,25 @@ Bygg görs normalt via `fr-release` (se nedan), men kan också köras manuellt:
 
 ```bash
 cd fr-app
-TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/fr-app.key bunx tauri build
+NO_STRIP=1 \
+TAURI_SIGNING_PRIVATE_KEY="$(base64 -w0 ~/.tauri/fr-app.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+bunx tauri build
 ```
+
+Viktigt:
+- `NO_STRIP=1` krävs på Arch/nya toolchains — `linuxdeploy`s inbyggda `strip`
+  klarar inte ELF-binärer med `.relr.dyn`-sektion och kraschar AppImage-
+  bundlingen med `failed to run linuxdeploy` om flaggan saknas. `fr-release`
+  (se nedan) sätter detta automatiskt.
+- `TAURI_SIGNING_PRIVATE_KEY_PATH` pekar på en fil men funkade **inte** för att
+  signera updater-artefakterna i denna Tauri-version — den gav
+  `A public key has been found, but no private key`. Det som fungerar är att
+  skicka in filens **base64-kodade innehåll** direkt i
+  `TAURI_SIGNING_PRIVATE_KEY` (rått filinnehåll eller `cat`-utskriften gav
+  `Invalid symbol` resp. `Missing comment in secret key`-fel).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` ska vara en tom sträng om nyckeln
+  genererades utan lösenord (vilket den gjorde här).
 
 Artefakter hamnar i `fr-app/src-tauri/target/release/bundle/appimage/`:
 - `fr-app_<version>_amd64.AppImage`          — körbar AppImage
