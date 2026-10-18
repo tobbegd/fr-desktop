@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+# Som ./dev, men pekar mot produktionsservern istället för localhost:8081.
+# Inkluderar WEBKIT-fixen för Wayland+Nvidia (se BUILD.md).
+export VITE_SERVER_URL="https://foretagsdatabas.se"
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+bun run tauri dev

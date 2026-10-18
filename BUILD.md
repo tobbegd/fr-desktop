@@ -36,6 +36,25 @@ För att peka mot annan server:
 
 ```bash
 VITE_SERVER_URL=https://stage.foretagsdatabas.se bunx tauri dev
+# eller mot riktig prod:
+VITE_SERVER_URL=https://foretagsdatabas.se bunx tauri dev
+```
+
+### Känt problem: Wayland + Nvidia-GPU kraschar WebKitGTK-fönstret
+
+På maskiner med Nvidia-GPU under Wayland (Hyprland m.fl.) kraschar
+WebKitGTK:s DMABUF-rendering direkt vid start med felet
+`Gdk-Message: Error 71 (Protocol error) dispatching to Wayland display`,
+vilket river ner SSR-anslutningen och ger ett följdfel i Vite:
+`transport was disconnected, cannot call "fetchModule"`. Det är INTE ett
+fr-web/backend-problem — det ser ofta ut så eftersom det händer precis
+när SSR-anropet görs, men orsaken är GPU-renderingen i webview-fönstret.
+
+Fix: sätt dessa miljövariabler innan `tauri dev`:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+  VITE_SERVER_URL=https://foretagsdatabas.se bunx tauri dev
 ```
 
 ---
