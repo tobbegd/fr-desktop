@@ -1096,7 +1096,7 @@
               oninput={(e) => { if (!(e.target as HTMLTextAreaElement).value) aiInfo = ""; quickSaveActive = false; resizeAiInput(); }}
             ></textarea>
           </div>
-          <!-- Bookmark: center=snippets, vänster=snabbspara (animeras hit efter AI-sökning) -->
+          <!-- Center: snabbspara (efter AI-sökning), annars snippets-toggle -->
           {#if !showSqlEditor && aiMode !== 'chat'}
             <div class="absolute top-full left-0 right-0 z-10" style="height:0; overflow:visible;">
               {#if quickSaveActive}
@@ -1105,18 +1105,19 @@
                     bind:this={quickSaveAnchorEl}
                     onclick={openQuickSave}
                     title="Spara sökning"
-                    class="absolute cursor-pointer select-none transition-colors save-slide-anim
-                      {quickSaveDone ? 'text-green-400' : 'text-zinc-500 hover:text-white'}"
-                    style="top:0; left:8px; transform:translateY(-50%);"
+                    class="absolute cursor-pointer select-none transition-colors flex items-center gap-1 px-2.5 py-0.5 text-xs rounded-full border save-fade-in
+                      {quickSaveDone ? 'text-green-400 save-blink-border' : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white hover:border-zinc-500'}"
+                    style="top:0; left:50%; transform:translateX(-50%) translateY(-50%);"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                    {quickSaveDone ? "Sparad!" : "Spara"}
                   </button>
                 {/key}
               {:else}
                 <button
                   onclick={() => { showSnippets = !showSnippets; blinkSnippet = false; }}
                   title={showSnippets ? "Dölj snippets" : "Visa snippets"}
-                  class="absolute cursor-pointer select-none transition-colors
+                  class="absolute cursor-pointer select-none transition-colors px-3 py-1.5
                     {showSnippets ? 'text-zinc-400 hover:text-zinc-300' : blinkSnippet ? 'text-orange-400' : 'text-zinc-600 hover:text-zinc-400'}"
                   style="top:0; left:50%; transform:translateX(-50%) translateY(-50%);"
                 >
@@ -2040,18 +2041,20 @@
     border: none;
     transition: height 0.3s ease;
   }
-  @keyframes save-slide-in {
-    from { opacity: 0; transform: translateY(-50%) translateX(44px); }
-    to   { opacity: 1; transform: translateY(-50%); }
+  @keyframes save-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
   }
-  @keyframes save-blink {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.7; color: rgb(110 231 183); }
+  .save-fade-in {
+    animation: save-fade-in 0.15s ease both;
   }
-  .save-slide-anim {
-    animation:
-      save-slide-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.18s both,
-      save-blink 0.28s ease 0.76s 2;
+  @keyframes save-blink-border {
+    0%, 100% { border-color: rgb(34 197 94); }   /* green-500 */
+    50%       { border-color: rgba(34, 197, 94, 0.25); }
+  }
+  .save-blink-border {
+    border-color: rgb(34 197 94);
+    animation: save-blink-border 0.5s ease 2;
   }
 </style>
 
