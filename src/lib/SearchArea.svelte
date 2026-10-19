@@ -16,6 +16,7 @@
   import { incrementPendingAiCalls } from "$lib/store";
   import { LAN_LIST } from "$lib/lan";
   import type { MenuItem } from "./MenuBar.svelte";
+  import KontakterPanel from "./KontakterPanel.svelte";
   import DashboardPanel from "./DashboardPanel.svelte";
 
   type Props = {
@@ -362,6 +363,7 @@
   let colFilters = $state<Record<string, string>>({});
   let contextMenu = $state<{ x: number; y: number; rowIdx: number; cellValue?: string; url?: string } | null>(null);
   let nyckeltaPanel = $state<{ orgnr: string; orgnamn: string } | null>(null);
+  let kontakterPanel = $state<{ orgnr: string; orgnamn: string } | null>(null);
   let kartaPanel = $state<{ orgnr: string; orgnamn: string; lat: number | null; lon: number | null; postort_lat: number | null; postort_lon: number | null; postort: string | null; gatuadress: string | null }[] | null>(null);
   let kartaSearch = $state(false);
 
@@ -397,6 +399,7 @@
     { key: "email",      label: "E-post",    icon: "✉️" },
     { key: "telefon",    label: "Telefon",   icon: "📞" },
     { key: "lon",        label: "Karta",     icon: "📍" },
+    { key: "har_kontakter", label: "Kontakter", icon: "📇" },
   ] as const;
 
   const hoveredIndicators = $derived.by(() => {
@@ -554,6 +557,7 @@
     email: "Kopiera e-post",
     telefon: "Kopiera telefon",
     lon: "Visa på karta",
+    har_kontakter: "Scrapad kontaktdata",
   };
 
   function onIndicatorClick(key: string, i: number) {
@@ -590,6 +594,12 @@
       case "lon": {
         const rows = getKartaRows([i]);
         if (rows.length > 0) kartaPanel = rows;
+        break;
+      }
+      case "har_kontakter": {
+        if (val("har_kontakter") === null) return;
+        const meta = getRowMeta(i);
+        if (meta) kontakterPanel = meta;
         break;
       }
     }
@@ -1343,7 +1353,14 @@
 
 
   {#if result && collapseSearch && !searchVisible}
-    <div class="shrink-0 h-[20px]" onmouseenter={() => searchVisible = true}></div>
+    <div
+      class="shrink-0 h-[20px] relative flex items-end justify-center group"
+      onmouseenter={() => searchVisible = true}
+    >
+      <svg width="40" height="8" viewBox="0 0 40 8" fill="none" class="opacity-30 group-hover:opacity-60 transition-opacity">
+        <path d="M2 0 L20 8 L38 0 Z" fill="currentColor" class="text-zinc-500" />
+      </svg>
+    </div>
   {/if}
 
   {#if aiMode === 'chat' && chatMessages.length > 0}
@@ -1460,7 +1477,8 @@
                   </div>
                 </th>
                 <th class="sticky top-0 px-1 bg-zinc-950 border-b border-zinc-800 z-10 select-none">
-                  <span class="flex gap-0.5 text-xs items-center">
+                  <span class="invisible block text-xs">x</span>
+                  <span class="mt-1 flex gap-0.5 text-xs items-center" style="height: 1.375rem">
                     {#each ROW_INDICATORS as ind}
                       {#if visibleIndicators.has(ind.key)}
                         <span
@@ -1789,6 +1807,15 @@
     orgnr={nyckeltaPanel.orgnr}
     orgnamn={nyckeltaPanel.orgnamn}
     onclose={() => nyckeltaPanel = null}
+  />
+{/if}
+
+{#if kontakterPanel}
+  <KontakterPanel
+    {dbPath}
+    orgnr={kontakterPanel.orgnr}
+    orgnamn={kontakterPanel.orgnamn}
+    onclose={() => kontakterPanel = null}
   />
 {/if}
 

@@ -29,6 +29,7 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
   registreringsdatum:     "datum då bolaget registrerades",
   storleksklass_anst:     "storleksklass baserad på antal anställda",
   storleksklass_oms:      "storleksklass baserad på omsättning",
+  har_kontakter:          "1 om bolaget har webbscrapad kontaktdata (namngivna kontakter, mailboxar eller sociala länkar), annars 0/NULL — använd för 'scrapad data'/'kontaktdata'",
 };
 
 const SEARCH_RULES = `
@@ -176,6 +177,7 @@ Viktiga regler:
 - Vardagsord som "verkstad", "butik", "byrå" söks i verksamhet och orgnamn — inte i sni-kolumner
 - "Med email/telefon/webbadress" = IS NOT NULL AND <> ''
 - "Med nyckeltal" = nettoomsattning IS NOT NULL
+- "Scrapad data"/"kontaktdata"/"scrapad kontaktdata"/"har kontakter" syftar på kolumnen har_kontakter (1 = bolaget har webbscrapade kontakter: namngivna personer, mailboxar eller sociala länkar) — filtrera med har_kontakter = 1. Blanda ALDRIG ihop detta med webbadress/email/telefon IS NOT NULL, det är en annan, mer specifik datakälla
 - Använd alltid LIMIT — om antal efterfrågas använd det antalet, annars LIMIT ${limit}
 - Inkludera ALLTID orgnr i SELECT, även när användaren inte ber om det — det behövs för att appen ska kunna skapa brevsäckar och identifiera bolag
 - Använd INTE tabellalias (FROM bolag b) om det inte finns en JOIN — referera direkt till kolumnnamn
@@ -196,6 +198,9 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%stockholm%' AND (ulow(verksa
 
 Fråga: restauranger i göteborg med email
 SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT NULL AND email <> '' AND (ulow(sni_1_namn) LIKE '%restaurang%' OR ulow(sni_2_namn) LIKE '%restaurang%' OR ulow(sni_3_namn) LIKE '%restaurang%' OR ulow(verksamhet) LIKE '%restaurang%' OR ulow(orgnamn) LIKE '%restaurang%') LIMIT ${limit};
+
+Fråga: bolag med scrapad data
+SQL: SELECT * FROM bolag WHERE har_kontakter = 1 LIMIT ${limit};
 
 Fråga: it-konsulter i norrland med historik per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT ${limit};

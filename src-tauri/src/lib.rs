@@ -486,6 +486,12 @@ fn open_mail_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> 
             reklamsparr TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (sack_id, orgnr)
         );
+        CREATE TABLE IF NOT EXISTS sackar_bolag_extra_email (
+            sack_id INTEGER NOT NULL REFERENCES sackar(id) ON DELETE CASCADE,
+            orgnr TEXT NOT NULL,
+            email TEXT NOT NULL,
+            PRIMARY KEY (sack_id, orgnr, email)
+        );
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             namn TEXT NOT NULL,
@@ -600,6 +606,54 @@ async fn add_bolag_to_sack(app: AppHandle, sack_id: i64, orgnr: String, orgnamn:
             rusqlite::params![sack_id, orgnr, orgnamn, email, reklamsparr],
         ).map_err(|e| e.to_string())?;
         Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+// Lägg till en kontakts e-post i en säck. Om bolaget (orgnr) redan finns i
+// säcken med en ANNAN e-post sparas den nya som en extra mottagare
+// (sackar_bolag_extra_email) istället för att skriva över huvudmailet —
+// huvudutskicket går till sackar_bolag.email, extra-mottagare får samma
+// mail skickat separat i post_utskick.
+#[derive(Serialize)]
+enum AddContactEmailResult {
+    #[serde(rename = "primary")]
+    Primary,
+    #[serde(rename = "extra")]
+    Extra,
+    #[serde(rename = "exists")]
+    Exists,
+}
+
+#[tauri::command]
+async fn add_contact_email_to_sack(app: AppHandle, sack_id: i64, orgnr: String, orgnamn: String, email: String) -> Result<AddContactEmailResult, String> {
+    let path = get_mail_db_path(&app)?;
+    let email = sanitize_email(&email);
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO sackar_bolag (sack_id, orgnr, orgnamn, email, reklamsparr) VALUES (?1, ?2, ?3, ?4, '')",
+            rusqlite::params![sack_id, orgnr, orgnamn, email],
+        ).map_err(|e| e.to_string())?;
+        if changed > 0 {
+            return Ok(AddContactEmailResult::Primary);
+        }
+        let existing_email: String = conn.query_row(
+            "SELECT email FROM sackar_bolag WHERE sack_id = ?1 AND orgnr = ?2",
+            rusqlite::params![sack_id, orgnr],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if existing_email == email {
+            return Ok(AddContactEmailResult::Exists);
+        }
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO sackar_bolag_extra_email (sack_id, orgnr, email) VALUES (?1, ?2, ?3)",
+            rusqlite::params![sack_id, orgnr, email],
+        ).map_err(|e| e.to_string())?;
+        if changed > 0 {
+            Ok(AddContactEmailResult::Extra)
+        } else {
+            Ok(AddContactEmailResult::Exists)
+        }
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -805,7 +859,7 @@ async fn post_utskick(
 ) -> Result<usize, String> {
     let path = get_mail_db_path(&app)?;
 
-    let (bolag, fordrojning_sek, amne, brodtext, content_type) = tokio::task::spawn_blocking({
+    let (bolag, sack_id, fordrojning_sek, amne, brodtext, content_type) = tokio::task::spawn_blocking({
         let path = path.clone();
         move || {
             let conn = open_mail_db(&path)?;
@@ -831,7 +885,7 @@ async fn post_utskick(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, String>(3).unwrap_or_default())),
             ).map_err(|e| e.to_string())?
             .filter_map(|r| r.ok()).collect();
-            Ok::<_, String>((bolag, fordrojning_sek, amne, brodtext, content_type))
+            Ok::<_, String>((bolag, sack_id, fordrojning_sek, amne, brodtext, content_type))
         }
     }).await.map_err(|e| e.to_string())??;
 
@@ -898,6 +952,55 @@ async fn post_utskick(
         if let Err(e) = mailer.send(msg).await {
             app.emit("utskick-fel", format!("Kunde inte skicka till {orgnamn} ({email}): {e}")).ok();
             continue;
+        }
+
+        // Extra mottagare för samma bolag (sackar_bolag_extra_email) —
+        // får samma mail skickat separat, men bolaget loggas bara en gång
+        // i utskick_logg (huvudmailet räknas som "bolaget klart").
+        let orgnr_extra = orgnr.clone();
+        let path_extra = path.clone();
+        let extra_emails: Vec<String> = tokio::task::spawn_blocking(move || {
+            let conn = open_mail_db(&path_extra)?;
+            let mut stmt = conn.prepare(
+                "SELECT email FROM sackar_bolag_extra_email WHERE sack_id = ?1 AND orgnr = ?2"
+            ).map_err(|e| e.to_string())?;
+            let emails: Vec<String> = stmt.query_map(
+                rusqlite::params![sack_id, orgnr_extra],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok()).collect();
+            Ok::<_, String>(emails)
+        }).await.map_err(|e| e.to_string())??;
+
+        for extra_email in extra_emails {
+            let extra_email = sanitize_email(&extra_email);
+            let extra_to_mailbox: Mailbox = match extra_email.parse() {
+                Ok(m) => m,
+                Err(e) => {
+                    app.emit("utskick-fel", format!("Hoppar över extra mottagare för {orgnamn}: ogiltig e-post ({extra_email}): {e}")).ok();
+                    continue;
+                }
+            };
+            let mut extra_builder = Message::builder()
+                .from(from_mailbox.clone())
+                .to(extra_to_mailbox);
+            if let Some(ref rt) = reply_to_mailbox {
+                extra_builder = extra_builder.reply_to(rt.clone());
+            }
+            let extra_msg = match extra_builder
+                .subject(fill(&amne))
+                .header(if content_type == "html" { ContentType::TEXT_HTML } else { ContentType::TEXT_PLAIN })
+                .body(fill(&brodtext))
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    app.emit("utskick-fel", format!("Hoppar över extra mottagare för {orgnamn}: kunde inte bygga mail: {e}")).ok();
+                    continue;
+                }
+            };
+            if let Err(e) = mailer.send(extra_msg).await {
+                app.emit("utskick-fel", format!("Kunde inte skicka till extra mottagare för {orgnamn} ({extra_email}): {e}")).ok();
+            }
         }
 
         let orgnr_c = orgnr.clone();
@@ -1188,6 +1291,7 @@ pub fn run() {
             delete_sack,
             list_sack_bolag,
             add_bolag_to_sack,
+            add_contact_email_to_sack,
             remove_bolag_from_sack,
             list_templates,
             create_template,
