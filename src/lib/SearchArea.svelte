@@ -1081,20 +1081,25 @@
     <div class="px-3 pt-12 pb-5">
       <div class="flex items-center gap-2">
         <!-- Vänster: historik (SQL-läge) / tom (chat-läge) — fast höjd för stabil layout -->
-        <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto h-[80px] pr-2 no-scrollbar" use:rowscroll={22} style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
-          {#if aiMode === 'sql'}
-          <div class="shrink-0 h-4"></div>
-          {#each aiQueryHistory as q, idx}
-            <div
-              class="group flex items-center justify-between gap-1 cursor-pointer select-none"
-              onclick={() => { aiQuery = q; runAiQuery(); }}
-            >
-              <span class="w-2 h-2 shrink-0 transition-all"
-                style="background:{aiHistoryColors[idx]}; box-shadow: 0 0 5px {aiHistoryColors[idx]}"></span>
-              <span class="text-base text-zinc-500 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
-            </div>
-          {/each}
+        <div class="flex-1 flex flex-col gap-0.5 h-[80px] pr-2">
+          {#if aiMode === 'sql' && aiQueryHistory.length > 0}
+            <p class="text-[9px] uppercase tracking-wide text-zinc-600 shrink-0 select-none">Historik</p>
           {/if}
+          <div class="flex-1 flex flex-col gap-0.5 overflow-y-auto no-scrollbar" use:rowscroll={22} style="-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 70%, transparent 100%)">
+            {#if aiMode === 'sql'}
+            <div class="shrink-0 h-4"></div>
+            {#each aiQueryHistory as q, idx}
+              <div
+                class="group flex items-center justify-between gap-1 cursor-pointer select-none"
+                onclick={() => { aiQuery = q; runAiQuery(); }}
+              >
+                <span class="w-2 h-2 shrink-0 transition-all"
+                  style="background:{aiHistoryColors[idx]}; box-shadow: 0 0 5px {aiHistoryColors[idx]}"></span>
+                <span class="text-base text-zinc-500 group-hover:text-zinc-300 truncate transition-colors flex-1">{q}</span>
+              </div>
+            {/each}
+            {/if}
+          </div>
         </div>
 
         <!-- Mitten: textarea med mode-knappar ovan och snippets nedan -->

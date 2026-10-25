@@ -409,6 +409,12 @@
       ],
     },
     {
+      label: "CRM",
+      items: [
+        { label: "Öppna CRM", action: () => { showCrmManager = true; crmManagerInitial = []; } },
+      ],
+    },
+    {
       label: "Fönster",
       items: [
         { label: showSqlEditor ? "Dölj SQL-editor" : "Visa SQL-editor", action: () => { showSqlEditor = !showSqlEditor; } },

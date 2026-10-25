@@ -73,9 +73,16 @@
       <button
         data-menu-trigger={idx}
         onclick={(e) => { toggle(idx); }}
-        class="px-3 text-sm transition-colors cursor-pointer self-stretch
+        class="px-3 text-sm transition-colors cursor-pointer self-stretch flex items-center gap-1
           {openIdx === idx ? 'bg-zinc-700 text-white' : isTorn ? 'text-zinc-600' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'}"
-      >{menu.label}</button>
+      >
+        <span>{menu.label}</span>
+        {#if idx === 0 && !expanded}
+          <svg width="6" height="10" viewBox="0 0 6 10" fill="none" class="shrink-0 opacity-50">
+            <path d="M0.5 0.5L5.5 5L0.5 9.5Z" fill="currentColor"/>
+          </svg>
+        {/if}
+      </button>
 
       {#if openIdx === idx}
         {@const triggerEl = document.querySelector(`[data-menu-trigger="${idx}"]`) as HTMLElement}
