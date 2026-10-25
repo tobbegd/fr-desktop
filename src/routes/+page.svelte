@@ -16,10 +16,11 @@
   import { appearance } from "$lib/appearance.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
   import MessagesPanel from "$lib/MessagesPanel.svelte";
-  import CrmPage from "$lib/CrmPage.svelte";
+  import CrmManager from "$lib/CrmManager.svelte";
+  import CrmNotis from "$lib/CrmNotis.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
-  type View = "auth" | "main" | "settings" | "mail" | "crm" | "demo-expired";
+  type View = "auth" | "main" | "settings" | "mail" | "demo-expired";
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
@@ -67,9 +68,22 @@
 
   // CRM — antal förfallna "återkomst senare"-poster, kollas vid appstart
   let crmForfallna = $state(0);
+  let crmNotisVisad = $state(false);
+  let visaCrmNotis = $state(false);
+  // CrmManager — enda CRM-ytan i appen. showCrmManager styr om panelen visas,
+  // crmManagerInitial avgör om den öppnas i listläge (tom array) eller
+  // direkt i redigeringsläge på en kö (icke-tom array).
+  let showCrmManager = $state(false);
+  let crmManagerInitial = $state<{ orgnr: string; orgnamn: string }[]>([]);
   async function loadCrmForfallna() {
     try {
       crmForfallna = await invoke<number>("count_crm_forfallna");
+      // Visa popupen bara EN gång per appstart (inte varje gång badgen
+      // uppdateras, t.ex. efter att man stängt CRM-panelen).
+      if (crmForfallna > 0 && !crmNotisVisad) {
+        crmNotisVisad = true;
+        visaCrmNotis = true;
+      }
     } catch {
       crmForfallna = 0;
     }
@@ -491,7 +505,7 @@
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {#if isOnline === true && apiKey}
           <button
-            onclick={() => { prevView = view; view = "crm"; }}
+            onclick={() => { showCrmManager = true; crmManagerInitial = []; }}
             class="relative text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
             title="CRM"
             aria-label="CRM"
@@ -619,10 +633,20 @@
       </div>
     {/if}
 
-    {#if view === "crm"}
-      <div class="fixed inset-0 z-50 bg-zinc-950">
-        <CrmPage onClose={() => { view = prevView; loadCrmForfallna(); }} />
-      </div>
+    {#if showCrmManager}
+      <CrmManager
+        {dbPath}
+        initial={crmManagerInitial}
+        onclose={() => { showCrmManager = false; crmManagerInitial = []; loadCrmForfallna(); }}
+        onchanged={loadCrmForfallna}
+      />
+    {/if}
+
+    {#if visaCrmNotis}
+      <CrmNotis
+        onClose={() => visaCrmNotis = false}
+        onEdit={(bolag) => { crmManagerInitial = bolag; showCrmManager = true; }}
+      />
     {/if}
 
     {#if view === "settings"}

@@ -679,15 +679,12 @@
   let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
 
   // CRM-hanterare — öppnas från högerklicksmenyns "CRM: Hantera...", se
-  // CrmManager.svelte. crmQueue håller {orgnr, orgnamn} för alla bolag man
-  // ska bläddra igenom (flera markerade rader), crmQueueIdx är var i kön man är.
-  let crmQueue = $state<{ orgnr: string; orgnamn: string }[]>([]);
-  let crmQueueIdx = $state(0);
-  const crmManagerBolag = $derived(crmQueue[crmQueueIdx] ?? null);
+  // CrmManager.svelte. Kön (flera markerade rader) hanteras INUTI
+  // CrmManager — här skickar vi bara med startlistan.
+  let crmManagerInitial = $state<{ orgnr: string; orgnamn: string }[] | null>(null);
 
   function openCrmManager(bolag: { orgnr: string; orgnamn: string }[]) {
-    crmQueue = bolag;
-    crmQueueIdx = 0;
+    crmManagerInitial = bolag;
   }
 
   // Säck-dialog
@@ -1977,15 +1974,11 @@
   />
 {/if}
 
-{#if crmManagerBolag}
+{#if crmManagerInitial}
   <CrmManager
     {dbPath}
-    orgnr={crmManagerBolag.orgnr}
-    orgnamn={crmManagerBolag.orgnamn}
-    queuePosition={crmQueue.length > 1 ? { index: crmQueueIdx, total: crmQueue.length } : null}
-    onprev={() => crmQueueIdx = Math.max(0, crmQueueIdx - 1)}
-    onnext={() => crmQueueIdx = Math.min(crmQueue.length - 1, crmQueueIdx + 1)}
-    onclose={() => { crmQueue = []; crmQueueIdx = 0; }}
+    initial={crmManagerInitial}
+    onclose={() => { crmManagerInitial = null; }}
     onchanged={loadCrm}
   />
 {/if}

@@ -812,6 +812,32 @@ async fn count_crm_forfallna(app: AppHandle) -> Result<i64, String> {
     }).await.map_err(|e| e.to_string())?
 }
 
+// Samma urval som count_crm_forfallna men med full data — används för
+// startup-notisen som listar VILKA bolag som är förfallna, inte bara antal.
+#[tauri::command]
+async fn list_crm_forfallna(app: AppHandle) -> Result<Vec<CrmBolag>, String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        let mut stmt = conn.prepare("
+            SELECT orgnr, orgnamn, status, notis, aterkom_datum, uppdaterad
+            FROM crm_bolag
+            WHERE status = 'aterkom' AND aterkom_datum IS NOT NULL AND date(aterkom_datum) <= date('now')
+            ORDER BY aterkom_datum ASC
+        ").map_err(|e| e.to_string())?;
+        let result = stmt.query_map([], |row| Ok(CrmBolag {
+            orgnr: row.get(0)?,
+            orgnamn: row.get(1)?,
+            status: row.get(2)?,
+            notis: row.get(3)?,
+            aterkom_datum: row.get(4)?,
+            uppdaterad: row.get(5)?,
+        })).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok()).collect();
+        Ok(result)
+    }).await.map_err(|e| e.to_string())?
+}
+
 // ---- CRM — egna tillagda telefonnummer/mejladresser ----
 // Separat från det scrapade bolag.telefon/bolag.email (read-only, byts ut
 // vid varje download_db). Flera per bolag tillåts (t.ex. en växel + en
@@ -1502,6 +1528,7 @@ pub fn run() {
             set_crm_status,
             remove_crm_bolag,
             count_crm_forfallna,
+            list_crm_forfallna,
             list_crm_kontakter,
             add_crm_kontakt,
             remove_crm_kontakt,

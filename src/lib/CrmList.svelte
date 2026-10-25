@@ -2,6 +2,11 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
+  // Listläge för CRM — fritextsök + statusfilter + lista över alla taggade
+  // bolag. Ersätter gamla CrmTab.svelte/CrmPage.svelte: detta är nu ett läge
+  // INUTI CrmManager.svelte istället för en egen sida, så "Redigera"/
+  // "Redigera alla" kan växla till samma manager-panel för detaljerad
+  // redigering utan att byta komponent/kontext.
   type CrmBolag = {
     orgnr: string;
     orgnamn: string;
@@ -11,8 +16,11 @@
     uppdaterad: string;
   };
 
-  type Props = { onClose: () => void };
-  let { onClose }: Props = $props();
+  type Props = {
+    onEdit: (bolag: { orgnr: string; orgnamn: string }) => void;
+    onEditAll: (bolag: { orgnr: string; orgnamn: string }[]) => void;
+  };
+  let { onEdit, onEditAll }: Props = $props();
 
   const STATUS_LABELS: Record<string, string> = {
     het: "Het",
@@ -20,8 +28,6 @@
     aterkom: "Återkomst senare",
   };
 
-  // Samma färgval som badgen/indikatorn i sökvyn: het=röd, kall=blå,
-  // återkomst=amber (appens befintliga "kräver handling"-färg).
   const STATUS_COLORS: Record<string, { dot: string; text: string; border: string }> = {
     het:     { dot: "bg-red-500",    text: "text-red-400",    border: "border-red-900/60" },
     kall:    { dot: "bg-sky-400",    text: "text-sky-400",    border: "border-sky-900/60" },
@@ -32,10 +38,6 @@
   let loading = $state(true);
   let statusFilter = $state<string>("alla");
   let sok = $state("");
-  let editOrgnr = $state<string | null>(null);
-  let editNotis = $state("");
-  let editDatum = $state("");
-  let editStatus = $state("het");
 
   function todayIso(): string {
     return new Date().toISOString().slice(0, 10);
@@ -45,7 +47,7 @@
     return r.status === "aterkom" && !!r.aterkom_datum && r.aterkom_datum <= todayIso();
   }
 
-  async function ladda() {
+  export async function ladda() {
     loading = true;
     try {
       rows = await invoke<CrmBolag[]>("list_crm_bolag");
@@ -73,28 +75,6 @@
   });
 
   const antalForfallna = $derived(rows.filter(isForfallen).length);
-
-  function openEdit(r: CrmBolag) {
-    editOrgnr = r.orgnr;
-    editStatus = r.status;
-    editNotis = r.notis;
-    editDatum = r.aterkom_datum ?? "";
-  }
-
-  async function saveEdit() {
-    if (!editOrgnr) return;
-    const r = rows.find(x => x.orgnr === editOrgnr);
-    if (!r) return;
-    await invoke("set_crm_status", {
-      orgnr: editOrgnr,
-      orgnamn: r.orgnamn,
-      status: editStatus,
-      notis: editNotis,
-      aterkomDatum: editStatus === "aterkom" && editDatum ? editDatum : null,
-    });
-    editOrgnr = null;
-    await ladda();
-  }
 
   async function removeBolag(orgnr: string) {
     await invoke("remove_crm_bolag", { orgnr });
@@ -128,6 +108,12 @@
         placeholder="Sök..."
         class="w-40 bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
       />
+      {#if filtrerade.length > 1}
+        <button
+          class="text-xs rounded px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors cursor-pointer whitespace-nowrap"
+          onclick={() => onEditAll(filtrerade.map(r => ({ orgnr: r.orgnr, orgnamn: r.orgnamn })))}
+        >Redigera alla ({filtrerade.length})</button>
+      {/if}
     </div>
   </div>
 
@@ -163,7 +149,7 @@
           </div>
           <button
             class="opacity-0 group-hover:opacity-100 text-xs text-zinc-500 hover:text-zinc-200 transition-opacity cursor-pointer px-2 py-1"
-            onclick={() => openEdit(r)}
+            onclick={() => onEdit({ orgnr: r.orgnr, orgnamn: r.orgnamn })}
           >Redigera</button>
           <button
             class="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 text-xs transition-opacity cursor-pointer px-1"
@@ -174,59 +160,3 @@
     {/if}
   </div>
 </div>
-
-{#if editOrgnr}
-  <div
-    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
-    role="dialog"
-    aria-modal="true"
-    onclick={() => editOrgnr = null}
-  >
-    <div
-      class="bg-zinc-900 border border-zinc-700 rounded-xl p-5 w-80 shadow-2xl flex flex-col gap-3"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <p class="text-sm text-zinc-200">Uppdatera status</p>
-      <div class="flex gap-1.5">
-        {#each ["het", "kall", "aterkom"] as s}
-          <button
-            class="flex-1 text-xs rounded px-2 py-1.5 border transition-colors cursor-pointer
-              {editStatus === s ? (STATUS_COLORS[s].border + ' ' + STATUS_COLORS[s].text + ' bg-zinc-800') : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'}"
-            onclick={() => editStatus = s}
-          >{STATUS_LABELS[s]}</button>
-        {/each}
-      </div>
-      {#if editStatus === "aterkom"}
-        <div>
-          <label class="text-xs text-zinc-500 mb-1 block" for="crm-datum">Återkomstdatum</label>
-          <input
-            id="crm-datum"
-            type="date"
-            bind:value={editDatum}
-            class="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500"
-          />
-        </div>
-      {/if}
-      <div>
-        <label class="text-xs text-zinc-500 mb-1 block" for="crm-notis">Notis</label>
-        <textarea
-          id="crm-notis"
-          bind:value={editNotis}
-          rows="3"
-          placeholder="T.ex. Pratade med VD, återkom efter sommaren..."
-          class="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 resize-none"
-        ></textarea>
-      </div>
-      <div class="flex gap-2 justify-end">
-        <button
-          class="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-          onclick={() => editOrgnr = null}
-        >Avbryt</button>
-        <button
-          class="px-3 py-1.5 text-xs bg-white text-zinc-900 font-medium rounded hover:bg-zinc-200 transition-colors cursor-pointer"
-          onclick={saveEdit}
-        >Spara</button>
-      </div>
-    </div>
-  </div>
-{/if}
