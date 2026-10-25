@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   const tauri = invoke;
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -366,6 +367,32 @@
   let kontakterPanel = $state<{ orgnr: string; orgnamn: string } | null>(null);
   let kartaPanel = $state<{ orgnr: string; orgnamn: string; lat: number | null; lon: number | null; postort_lat: number | null; postort_lon: number | null; postort: string | null; gatuadress: string | null }[] | null>(null);
   let kartaSearch = $state(false);
+
+  // CRM — status/färg per orgnr, laddas lokalt (mailutskick.db) och matchas
+  // på orgnr mot aktuellt sökresultat. Oberoende av vilken bolagsdatabas
+  // som laddats ner.
+  let crmByOrgnr = $state<Map<string, { status: string; notis: string; aterkom_datum: string | null }>>(new Map());
+  const CRM_LABELS: Record<string, string> = { het: "Het", kall: "Kall", aterkom: "Återkomst senare" };
+  const CRM_BORDER: Record<string, string> = { het: "border-l-red-500", kall: "border-l-sky-400", aterkom: "border-l-amber-400" };
+  // Används för att färga själva markeringsrutan (checkboxen) längst till
+  // vänster istf en separat prick — bg+border matchar statusfärgen.
+  const CRM_BOX: Record<string, string> = { het: "bg-red-500 border-red-500", kall: "bg-sky-400 border-sky-400", aterkom: "bg-amber-400 border-amber-400" };
+
+  async function loadCrm() {
+    try {
+      const rows = await tauri<{ orgnr: string; status: string; notis: string; aterkom_datum: string | null }[]>("list_crm_bolag");
+      crmByOrgnr = new Map(rows.map(r => [r.orgnr, { status: r.status, notis: r.notis, aterkom_datum: r.aterkom_datum }]));
+    } catch {
+      crmByOrgnr = new Map();
+    }
+  }
+
+  onMount(() => { loadCrm(); });
+
+  async function setCrmStatus(orgnr: string, orgnamn: string, status: string) {
+    await tauri("set_crm_status", { orgnr, orgnamn, status, notis: "", aterkomDatum: null });
+    await loadCrm();
+  }
 
   function onKartaSearchResult(orgnrs: string[]) {
     kartaSearch = false;
@@ -1539,9 +1566,12 @@
             </thead>
             <tbody onmouseenter={() => { if (collapseSearch) { searchVisible = false; showSnippets = false; } }}>
               {#each pagedRows as { row, i }}
+                {@const crmMeta = getRowMeta(i)}
+                {@const crm = crmMeta ? crmByOrgnr.get(crmMeta.orgnr) : undefined}
                 <tr
                   class="border-b border-zinc-900 select-none transition-colors cursor-pointer
-                    {selectedRows.has(i) ? 'bg-zinc-700/40 hover:bg-zinc-700/50' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}"
+                    {selectedRows.has(i) ? 'bg-zinc-700/40 hover:bg-zinc-700/50' : i % 2 === 0 ? 'hover:bg-zinc-800/40' : 'bg-zinc-900/30 hover:bg-zinc-800/40'}
+                    {crm ? 'border-l-2 ' + (CRM_BORDER[crm.status] ?? '') : ''}"
                   onclick={(e) => onRowClick(e, i)}
                   oncontextmenu={(e) => openContextMenu(e, i)}
                   onmouseenter={() => {
@@ -1559,8 +1589,11 @@
                     onmousedown={(e) => onCheckboxDown(e, i)}
                     onclick={(e) => e.stopPropagation()}
                   >
-                    <div class="w-3.5 h-3.5 rounded-sm border-2 flex items-center justify-center transition-colors
-                      {selectedRows.has(i) ? 'bg-white border-white' : 'border-zinc-600 hover:border-zinc-400'}">
+                    <div
+                      class="w-3.5 h-3.5 rounded-sm border-2 flex items-center justify-center transition-colors
+                        {selectedRows.has(i) ? 'bg-white border-white' : crm ? (CRM_BOX[crm.status] ?? '') : 'border-zinc-600 hover:border-zinc-400'}"
+                      title={!selectedRows.has(i) && crm ? `${CRM_LABELS[crm.status] ?? crm.status}${crm.notis ? ' — ' + crm.notis : ''}` : undefined}
+                    >
                       {#if selectedRows.has(i)}
                         <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                           <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1569,7 +1602,7 @@
                     </div>
                   </td>
                   <td class="px-1 whitespace-nowrap" onclick={(e) => e.stopPropagation()}>
-                    <span class="flex gap-0.5 text-xs">
+                    <span class="flex gap-0.5 text-xs items-center">
                       {#each ROW_INDICATORS as ind}
                         {#if visibleIndicators.has(ind.key)}
                           {@const idx = result.columns.indexOf(ind.key)}
@@ -1848,6 +1881,21 @@
         return rows.length > 0
           ? { label, action: () => { kartaPanel = rows; } }
           : { label: "Ingen kartdata på dessa rader", action: () => {}, disabled: true };
+      })(),
+      { separator: true },
+      ...(() => {
+        const meta = getRowMeta(rowIdx);
+        if (!meta) return [{ label: "Ingen orgnr på denna rad", action: () => {}, disabled: true }];
+        const current = crmByOrgnr.get(meta.orgnr);
+        const items: MenuItem[] = [
+          { label: current?.status === "het" ? "✓ CRM: Het" : "CRM: Het", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "het") },
+          { label: current?.status === "kall" ? "✓ CRM: Kall" : "CRM: Kall", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "kall") },
+          { label: current?.status === "aterkom" ? "✓ CRM: Återkomst senare" : "CRM: Återkomst senare", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "aterkom") },
+        ];
+        if (current) {
+          items.push({ label: "Ta bort CRM-status", action: async () => { await tauri("remove_crm_bolag", { orgnr: meta.orgnr }); await loadCrm(); } });
+        }
+        return items;
       })(),
       { separator: true },
       {

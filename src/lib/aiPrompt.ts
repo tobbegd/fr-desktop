@@ -32,6 +32,26 @@ const COLUMN_DESCRIPTIONS_FALLBACK: Record<string, string> = {
   har_kontakter:          "1 om bolaget har webbscrapad kontaktdata (namngivna kontakter, mailboxar eller sociala länkar), annars 0/NULL — använd för 'scrapad data'/'kontaktdata'",
 };
 
+// crm_bolag ligger i en SEPARAT databasfil (mailutskick.db, ATTACHad som
+// schema "crm" i query_db) — inte i bolag-tabellen. JOIN:a alltid uttryckligen
+// mot crm.crm_bolag ON b.orgnr = crm.crm_bolag.orgnr, aldrig som om kolumnerna
+// fanns direkt i bolag.
+const CRM_COLUMN_DESCRIPTIONS: Record<string, string> = {
+  orgnr:         "organisationsnummer — JOIN:a mot bolag.orgnr",
+  orgnamn:       "företagsnamn vid tidpunkten statusen sattes (kan skilja från bolag.orgnamn vid namnbyte, använd normalt bolag.orgnamn i SELECT)",
+  status:        "CRM-status för bolaget: 'het' (hett lead), 'kall' (kallt lead), eller 'aterkom' (återkomst senare) — finns ENDAST för bolag användaren taggat, de flesta bolag saknar rad i crm_bolag helt",
+  notis:         "fritext-anteckning kopplad till CRM-statusen",
+  aterkom_datum: "datum (YYYY-MM-DD) för när en 'aterkom'-status ska följas upp — kan vara förfallet (<= dagens datum) eller i framtiden",
+  uppdaterad:    "tidpunkt då CRM-statusen senast ändrades",
+};
+
+const CRM_SEARCH_RULES = `
+- \"Heta\"/\"het\"/\"hot leads\" = crm.crm_bolag.status = 'het'. \"Kalla\"/\"kall\" = status = 'kall'. \"Återkomst\"/\"följa upp senare\"/\"ska kontaktas igen\" = status = 'aterkom'
+- CRM-status/notis/återkomstdatum finns INTE i bolag-tabellen — de ligger i en separat tabell crm_bolag (ATTACHad som schema \"crm\"). JOIN:a ALLTID uttryckligen: ... FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'het' ...
+- \"Förfallen återkomst\"/\"återkomst som passerat\" = c.status = 'aterkom' AND c.aterkom_datum <= date('now')
+- De flesta bolag har INGEN rad i crm_bolag — använd JOIN (inner) när frågan explicit handlar om CRM-status (resultatet blir bara taggade bolag), men LEFT JOIN om frågan vill visa CRM-status som en extra kolumn bredvid ett vanligt bolag-urval utan att utesluta otaggade bolag
+`;
+
 const SEARCH_RULES = `
 Regler:
 - Kolumnnamn innehåller svenska tecken — kopiera dem EXAKT från schemat. Skriv sateslän (inte sateslAN eller sateslAN), sni_1_namn (inte sni_1_name). Hitta kolumnnamnet i listan ovan och använd det ordagrant
@@ -48,7 +68,7 @@ Regler:
 - "Med email", "med webbadress", "med telefon" = fältet MÅSTE finnas — lägg ALLTID till både IS NOT NULL och <> '' för dessa fält. Exempel: email IS NOT NULL AND email <> ''. Utan detta filter returneras bolag som saknar email, vilket är fel.
 - Vid filtrering på numeriska fält (medelantal_anstallda, nettoomsattning, arets_resultat, eget_kapital) — lägg alltid till IS NOT NULL: t.ex. medelantal_anstallda IS NOT NULL AND medelantal_anstallda > 10
 - "Webbyrå" är inte ett SNI-begrepp — sök alltid med BÅDE SNI-termer (dataprogrammering, it-konsult, webbdesign) OCH verksamhet/orgnamn med webb, digital
-`;
+${CRM_SEARCH_RULES}`;
 
 // aiExpl: table -> column -> description (loaded from ai_expl table in DB)
 export type AiExpl = Record<string, Record<string, string>>;
@@ -57,11 +77,15 @@ export function buildColumnGuide(schema: Record<string, string[]>, aiExpl: AiExp
   const lines: string[] = [];
   for (const [table, cols] of Object.entries(schema)) {
     const tableDescs = aiExpl[table] ?? {};
-    const described = cols.filter(c => tableDescs[c] ?? COLUMN_DESCRIPTIONS_FALLBACK[c]);
+    const fallback = table === "crm_bolag" ? CRM_COLUMN_DESCRIPTIONS : COLUMN_DESCRIPTIONS_FALLBACK;
+    const described = cols.filter(c => tableDescs[c] ?? fallback[c]);
     if (described.length === 0) continue;
-    lines.push(`Kolumner i ${table}:`);
+    // crm_bolag ligger i en separat ATTACHad databas (se CRM_SEARCH_RULES) —
+    // visa med schema-prefix så AI:n alltid skriver crm.crm_bolag i JOIN, inte crm_bolag.
+    const displayName = table === "crm_bolag" ? "crm.crm_bolag" : table;
+    lines.push(`Kolumner i ${displayName}:`);
     for (const col of described) {
-      const desc = tableDescs[col] ?? COLUMN_DESCRIPTIONS_FALLBACK[col];
+      const desc = tableDescs[col] ?? fallback[col];
       lines.push(`  ${col.padEnd(28)} = ${desc}`);
     }
   }
@@ -178,7 +202,7 @@ Viktiga regler:
 - "Med email/telefon/webbadress" = IS NOT NULL AND <> ''
 - "Med nyckeltal" = nettoomsattning IS NOT NULL
 - "Scrapad data"/"kontaktdata"/"scrapad kontaktdata"/"har kontakter" syftar på kolumnen har_kontakter (1 = bolaget har webbscrapade kontakter: namngivna personer, mailboxar eller sociala länkar) — filtrera med har_kontakter = 1. Blanda ALDRIG ihop detta med webbadress/email/telefon IS NOT NULL, det är en annan, mer specifik datakälla
-- Använd alltid LIMIT — om antal efterfrågas använd det antalet, annars LIMIT ${limit}
+${CRM_SEARCH_RULES}- Använd alltid LIMIT — om antal efterfrågas använd det antalet, annars LIMIT ${limit}
 - Inkludera ALLTID orgnr i SELECT, även när användaren inte ber om det — det behövs för att appen ska kunna skapa brevsäckar och identifiera bolag
 - Använd INTE tabellalias (FROM bolag b) om det inte finns en JOIN — referera direkt till kolumnnamn
 - Om alias används: ulow() omsluter kolumnen, INTE aliset — skriv ulow(b.postort), ALDRIG b.ulow(postort)
@@ -201,6 +225,12 @@ SQL: SELECT * FROM bolag WHERE ulow(postort) LIKE '%göteborg%' AND email IS NOT
 
 Fråga: bolag med scrapad data
 SQL: SELECT * FROM bolag WHERE har_kontakter = 1 LIMIT ${limit};
+
+Fråga: heta leads i stockholm
+SQL: SELECT b.* FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'het' AND ulow(b.postort) LIKE '%stockholm%' LIMIT ${limit};
+
+Fråga: bolag jag ska återkomma till som är förfallna
+SQL: SELECT b.*, c.notis, c.aterkom_datum FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'aterkom' AND c.aterkom_datum <= date('now') LIMIT ${limit};
 
 Fråga: it-konsulter i norrland med historik per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT ${limit};

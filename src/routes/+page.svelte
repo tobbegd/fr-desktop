@@ -16,9 +16,10 @@
   import { appearance } from "$lib/appearance.svelte";
   import { showStatus, clearStatus, status } from "$lib/status.svelte";
   import MessagesPanel from "$lib/MessagesPanel.svelte";
+  import CrmPage from "$lib/CrmPage.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
-  type View = "auth" | "main" | "settings" | "mail" | "demo-expired";
+  type View = "auth" | "main" | "settings" | "mail" | "crm" | "demo-expired";
   let prevView = $state<View>("auth");
 
   let view = $state<View>("auth");
@@ -64,6 +65,16 @@
   let showMessagesPanel = $state(false);
   let messagesPollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // CRM — antal förfallna "återkomst senare"-poster, kollas vid appstart
+  let crmForfallna = $state(0);
+  async function loadCrmForfallna() {
+    try {
+      crmForfallna = await invoke<number>("count_crm_forfallna");
+    } catch {
+      crmForfallna = 0;
+    }
+  }
+
   // Ladda sparade prefs vid start
   loadPrefs().then(async p => {
     if (p.serverUrl) serverUrl = p.serverUrl;
@@ -84,6 +95,7 @@
     if (p.apiKey) {
       view = "main";
       initialized = true;
+      loadCrmForfallna();
 
       const pending = p.pendingAiCalls ?? 0;
       if (pending > 0) {
@@ -334,6 +346,7 @@
       await savePrefs({ serverUrl, apiKey, email, tier, offlineLogins: 0 });
       hasCheckedUpdate = false;
       view = "main";
+      loadCrmForfallna();
     } catch (e) {
       const msg = String(e);
       log(`Verifiering misslyckades: ${msg}`);
@@ -478,6 +491,20 @@
       <span class="text-xs text-zinc-500 flex items-center gap-2 px-2">
         {#if isOnline === true && apiKey}
           <button
+            onclick={() => { prevView = view; view = "crm"; }}
+            class="relative text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            title="CRM"
+            aria-label="CRM"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8" r="4"/>
+              <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>
+            </svg>
+            {#if crmForfallna > 0}
+              <span class="absolute -top-1.5 -right-2 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-amber-500 text-zinc-950 text-[9px] font-bold rounded-full leading-none">{crmForfallna}</span>
+            {/if}
+          </button>
+          <button
             onclick={() => showMessagesPanel = !showMessagesPanel}
             class="relative text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
             title="Meddelanden"
@@ -589,6 +616,12 @@
     {#if view === "mail"}
       <div class="fixed inset-0 z-50 bg-zinc-950">
         <MailPage onClose={() => { view = prevView; }} />
+      </div>
+    {/if}
+
+    {#if view === "crm"}
+      <div class="fixed inset-0 z-50 bg-zinc-950">
+        <CrmPage onClose={() => { view = prevView; loadCrmForfallna(); }} />
       </div>
     {/if}
 

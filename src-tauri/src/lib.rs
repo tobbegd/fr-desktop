@@ -245,7 +245,7 @@ async fn download_db(
 // ---- Schema ----
 
 #[tauri::command]
-async fn get_schema(db_path: String) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+async fn get_schema(app: AppHandle, db_path: String) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
     tokio::task::spawn_blocking(move || {
         let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -269,6 +269,24 @@ async fn get_schema(db_path: String) -> Result<std::collections::HashMap<String,
                 .filter_map(|r| r.ok())
                 .collect();
             schema.insert(table, cols);
+        }
+
+        // Exponera crm_bolag (lagrad i separata mailutskick.db, se query_db som
+        // ATTACHar samma fil) i schemat så AI-sökningen känner till het/kall/
+        // återkomst-statusar och kan föreslå JOIN mot dem.
+        if let Ok(mail_path) = get_mail_db_path(&app) {
+            if let Ok(mail_conn) = open_mail_db(&mail_path) {
+                if let Ok(mut col_stmt) = mail_conn.prepare("PRAGMA table_info(\"crm_bolag\")") {
+                    let cols: Vec<String> = col_stmt
+                        .query_map([], |row| row.get::<_, String>(1))
+                        .map_err(|e| e.to_string())?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    if !cols.is_empty() {
+                        schema.insert("crm_bolag".to_string(), cols);
+                    }
+                }
+            }
         }
         Ok(schema)
     })
@@ -337,10 +355,25 @@ fn register_ulow(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 }
 
 #[tauri::command]
-async fn query_db(db_path: String, sql: String) -> Result<QueryResult, String> {
+async fn query_db(app: AppHandle, db_path: String, sql: String) -> Result<QueryResult, String> {
     tokio::task::spawn_blocking(move || {
         let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
         register_ulow(&conn).map_err(|e| e.to_string())?;
+
+        // ATTACHa mailutskick.db som "crm" så AI-genererad SQL kan JOIN:a
+        // bolag mot crm_bolag (het/kall/återkomst) trots att CRM-statusen
+        // lever i en helt separat databasfil. open_mail_db säkerställer att
+        // crm_bolag-tabellen finns innan ATTACH (annars misslyckas JOIN mot
+        // en tom/nyskapad fil). Misslyckas detta (t.ex. ingen mailutskick.db
+        // än) är det inte fatalt — vanliga bolag-sökningar funkar ändå.
+        if let Ok(mail_path) = get_mail_db_path(&app) {
+            if open_mail_db(&mail_path).is_ok() {
+                if let Some(mail_path_str) = mail_path.to_str() {
+                    let _ = conn.execute("ATTACH DATABASE ?1 AS crm", [mail_path_str]);
+                }
+            }
+        }
+
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let columns: Vec<String> = stmt.column_names().iter().map(|&s| s.to_string()).collect();
         let col_count = columns.len();
@@ -491,6 +524,14 @@ fn open_mail_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> 
             orgnr TEXT NOT NULL,
             email TEXT NOT NULL,
             PRIMARY KEY (sack_id, orgnr, email)
+        );
+        CREATE TABLE IF NOT EXISTS crm_bolag (
+            orgnr TEXT PRIMARY KEY,
+            orgnamn TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            notis TEXT NOT NULL DEFAULT '',
+            aterkom_datum TEXT,
+            uppdaterad TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -667,6 +708,99 @@ async fn remove_bolag_from_sack(app: AppHandle, sack_id: i64, orgnr: String) -> 
             rusqlite::params![sack_id, orgnr],
         ).map_err(|e| e.to_string())?;
         Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+// ---- CRM (het/kall/återkomst) ----
+// Lagras lokalt i mailutskick.db (inte i den nedladdade bolagsdatabasen),
+// kopplat enbart via orgnr — överlever databas-uppdateringar precis som
+// brevsäckarna. En status i taget per bolag (ersätter varandra).
+
+#[derive(Serialize, Clone)]
+struct CrmBolag {
+    orgnr: String,
+    orgnamn: String,
+    status: String,
+    notis: String,
+    aterkom_datum: Option<String>,
+    uppdaterad: String,
+}
+
+#[tauri::command]
+async fn list_crm_bolag(app: AppHandle) -> Result<Vec<CrmBolag>, String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        let mut stmt = conn.prepare("
+            SELECT orgnr, orgnamn, status, notis, aterkom_datum, uppdaterad
+            FROM crm_bolag
+            ORDER BY uppdaterad DESC
+        ").map_err(|e| e.to_string())?;
+        let result = stmt.query_map([], |row| Ok(CrmBolag {
+            orgnr: row.get(0)?,
+            orgnamn: row.get(1)?,
+            status: row.get(2)?,
+            notis: row.get(3)?,
+            aterkom_datum: row.get(4)?,
+            uppdaterad: row.get(5)?,
+        })).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok()).collect();
+        Ok(result)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_crm_status(
+    app: AppHandle,
+    orgnr: String,
+    orgnamn: String,
+    status: String,
+    notis: String,
+    aterkom_datum: Option<String>,
+) -> Result<(), String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        conn.execute(
+            "INSERT INTO crm_bolag (orgnr, orgnamn, status, notis, aterkom_datum, uppdaterad)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
+             ON CONFLICT(orgnr) DO UPDATE SET
+                orgnamn = excluded.orgnamn,
+                status = excluded.status,
+                notis = excluded.notis,
+                aterkom_datum = excluded.aterkom_datum,
+                uppdaterad = datetime('now')",
+            rusqlite::params![orgnr, orgnamn, status, notis, aterkom_datum],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn remove_crm_bolag(app: AppHandle, orgnr: String) -> Result<(), String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        conn.execute("DELETE FROM crm_bolag WHERE orgnr = ?1", [orgnr])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+// Räknar "återkomst senare"-poster vars datum har passerat (<= idag) —
+// används för badgen vid appstart. SQLite date()-jämförelse funkar direkt
+// på ISO-datumsträngar (YYYY-MM-DD).
+#[tauri::command]
+async fn count_crm_forfallna(app: AppHandle) -> Result<i64, String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM crm_bolag
+             WHERE status = 'aterkom' AND aterkom_datum IS NOT NULL AND date(aterkom_datum) <= date('now')",
+            [], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        Ok(count)
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -1293,6 +1427,10 @@ pub fn run() {
             add_bolag_to_sack,
             add_contact_email_to_sack,
             remove_bolag_from_sack,
+            list_crm_bolag,
+            set_crm_status,
+            remove_crm_bolag,
+            count_crm_forfallna,
             list_templates,
             create_template,
             update_template,
