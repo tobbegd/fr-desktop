@@ -533,6 +533,14 @@ fn open_mail_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> 
             aterkom_datum TEXT,
             uppdaterad TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS crm_kontakt (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orgnr TEXT NOT NULL,
+            typ TEXT NOT NULL CHECK (typ IN ('telefon', 'email')),
+            varde TEXT NOT NULL,
+            skapad TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_crm_kontakt_orgnr ON crm_kontakt(orgnr);
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             namn TEXT NOT NULL,
@@ -801,6 +809,69 @@ async fn count_crm_forfallna(app: AppHandle) -> Result<i64, String> {
             [], |row| row.get(0),
         ).map_err(|e| e.to_string())?;
         Ok(count)
+    }).await.map_err(|e| e.to_string())?
+}
+
+// ---- CRM — egna tillagda telefonnummer/mejladresser ----
+// Separat från det scrapade bolag.telefon/bolag.email (read-only, byts ut
+// vid varje download_db). Flera per bolag tillåts (t.ex. en växel + en
+// direktlinje), till skillnad från crm_bolag som har en status i taget.
+
+#[derive(Serialize, Clone)]
+struct CrmKontakt {
+    id: i64,
+    orgnr: String,
+    typ: String,
+    varde: String,
+}
+
+#[tauri::command]
+async fn list_crm_kontakter(app: AppHandle, orgnr: String) -> Result<Vec<CrmKontakt>, String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, orgnr, typ, varde FROM crm_kontakt WHERE orgnr = ?1 ORDER BY id"
+        ).map_err(|e| e.to_string())?;
+        let result = stmt.query_map([orgnr], |row| Ok(CrmKontakt {
+            id: row.get(0)?,
+            orgnr: row.get(1)?,
+            typ: row.get(2)?,
+            varde: row.get(3)?,
+        })).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok()).collect();
+        Ok(result)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn add_crm_kontakt(app: AppHandle, orgnr: String, typ: String, varde: String) -> Result<i64, String> {
+    if typ != "telefon" && typ != "email" {
+        return Err("Ogiltig typ".to_string());
+    }
+    let varde = varde.trim().to_string();
+    if varde.is_empty() {
+        return Err("Värdet får inte vara tomt".to_string());
+    }
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        conn.execute(
+            "INSERT INTO crm_kontakt (orgnr, typ, varde) VALUES (?1, ?2, ?3)",
+            rusqlite::params![orgnr, typ, varde],
+        ).map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn remove_crm_kontakt(app: AppHandle, id: i64) -> Result<(), String> {
+    let path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let conn = open_mail_db(&path)?;
+        conn.execute("DELETE FROM crm_kontakt WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -1431,6 +1502,9 @@ pub fn run() {
             set_crm_status,
             remove_crm_bolag,
             count_crm_forfallna,
+            list_crm_kontakter,
+            add_crm_kontakt,
+            remove_crm_kontakt,
             list_templates,
             create_template,
             update_template,

@@ -18,6 +18,7 @@
   import { LAN_LIST } from "$lib/lan";
   import type { MenuItem } from "./MenuBar.svelte";
   import KontakterPanel from "./KontakterPanel.svelte";
+  import CrmManager from "./CrmManager.svelte";
   import DashboardPanel from "./DashboardPanel.svelte";
 
   type Props = {
@@ -676,6 +677,18 @@
   }
 
   let exportPanel = $state<{ rows: unknown[][]; label: string } | null>(null);
+
+  // CRM-hanterare — öppnas från högerklicksmenyns "CRM: Hantera...", se
+  // CrmManager.svelte. crmQueue håller {orgnr, orgnamn} för alla bolag man
+  // ska bläddra igenom (flera markerade rader), crmQueueIdx är var i kön man är.
+  let crmQueue = $state<{ orgnr: string; orgnamn: string }[]>([]);
+  let crmQueueIdx = $state(0);
+  const crmManagerBolag = $derived(crmQueue[crmQueueIdx] ?? null);
+
+  function openCrmManager(bolag: { orgnr: string; orgnamn: string }[]) {
+    crmQueue = bolag;
+    crmQueueIdx = 0;
+  }
 
   // Säck-dialog
   type SackItem = { id: number; namn: string; antal: number };
@@ -1598,6 +1611,8 @@
                         <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                           <path d="M1.5 4L3.5 6L6.5 2" stroke="#18181b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
+                      {:else if crm?.notis}
+                        <span class="text-[8px] leading-none font-bold text-zinc-900">N</span>
                       {/if}
                     </div>
                   </td>
@@ -1887,14 +1902,17 @@
         const meta = getRowMeta(rowIdx);
         if (!meta) return [{ label: "Ingen orgnr på denna rad", action: () => {}, disabled: true }];
         const current = crmByOrgnr.get(meta.orgnr);
+        const kon = selectedRows.size > 1
+          ? [...selectedRows].map(i => getRowMeta(i)).filter((m): m is { orgnr: string; orgnamn: string } => !!m)
+          : [];
         const items: MenuItem[] = [
           { label: current?.status === "het" ? "✓ CRM: Het" : "CRM: Het", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "het") },
           { label: current?.status === "kall" ? "✓ CRM: Kall" : "CRM: Kall", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "kall") },
           { label: current?.status === "aterkom" ? "✓ CRM: Återkomst senare" : "CRM: Återkomst senare", action: () => setCrmStatus(meta.orgnr, meta.orgnamn, "aterkom") },
+          kon.length > 1
+            ? { label: `CRM: Hantera (${kon.length})`, action: () => { openCrmManager(kon); } }
+            : { label: "CRM: Hantera...", action: () => { openCrmManager([meta]); } },
         ];
-        if (current) {
-          items.push({ label: "Ta bort CRM-status", action: async () => { await tauri("remove_crm_bolag", { orgnr: meta.orgnr }); await loadCrm(); } });
-        }
         return items;
       })(),
       { separator: true },
@@ -1956,6 +1974,19 @@
     columns={result.columns}
     label={exportPanel.label}
     onclose={() => exportPanel = null}
+  />
+{/if}
+
+{#if crmManagerBolag}
+  <CrmManager
+    {dbPath}
+    orgnr={crmManagerBolag.orgnr}
+    orgnamn={crmManagerBolag.orgnamn}
+    queuePosition={crmQueue.length > 1 ? { index: crmQueueIdx, total: crmQueue.length } : null}
+    onprev={() => crmQueueIdx = Math.max(0, crmQueueIdx - 1)}
+    onnext={() => crmQueueIdx = Math.min(crmQueue.length - 1, crmQueueIdx + 1)}
+    onclose={() => { crmQueue = []; crmQueueIdx = 0; }}
+    onchanged={loadCrm}
   />
 {/if}
 

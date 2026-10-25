@@ -46,9 +46,10 @@ const CRM_COLUMN_DESCRIPTIONS: Record<string, string> = {
 };
 
 const CRM_SEARCH_RULES = `
-- \"Heta\"/\"het\"/\"hot leads\" = crm.crm_bolag.status = 'het'. \"Kalla\"/\"kall\" = status = 'kall'. \"Återkomst\"/\"följa upp senare\"/\"ska kontaktas igen\" = status = 'aterkom'
-- CRM-status/notis/återkomstdatum finns INTE i bolag-tabellen — de ligger i en separat tabell crm_bolag (ATTACHad som schema \"crm\"). JOIN:a ALLTID uttryckligen: ... FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'het' ...
-- \"Förfallen återkomst\"/\"återkomst som passerat\" = c.status = 'aterkom' AND c.aterkom_datum <= date('now')
+- "Heta"/"het"/"hot leads" = crm.crm_bolag.status = 'het'. "Kalla"/"kall" = status = 'kall'. "Återkomst"/"följa upp senare"/"ska kontaktas igen" = status = 'aterkom'
+- "Alla med CRM-status"/"alla taggade bolag"/"bolag jag har markerat i CRM" (utan att ange VILKEN status) = JOIN mot crm.crm_bolag UTAN WHERE-filter på status — resultatet blir alla bolag som finns i crm_bolag oavsett status (het/kall/aterkom)
+- CRM-status/notis/återkomstdatum finns INTE i bolag-tabellen — de ligger i en separat tabell crm_bolag (ATTACHad som schema "crm"). JOIN:a ALLTID uttryckligen: ... FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'het' ...
+- "Förfallen återkomst"/"återkomst som passerat" = c.status = 'aterkom' AND c.aterkom_datum <= date('now')
 - De flesta bolag har INGEN rad i crm_bolag — använd JOIN (inner) när frågan explicit handlar om CRM-status (resultatet blir bara taggade bolag), men LEFT JOIN om frågan vill visa CRM-status som en extra kolumn bredvid ett vanligt bolag-urval utan att utesluta otaggade bolag
 `;
 
@@ -231,6 +232,9 @@ SQL: SELECT b.* FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.s
 
 Fråga: bolag jag ska återkomma till som är förfallna
 SQL: SELECT b.*, c.notis, c.aterkom_datum FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr WHERE c.status = 'aterkom' AND c.aterkom_datum <= date('now') LIMIT ${limit};
+
+Fråga: visa alla med crm status
+SQL: SELECT b.*, c.status, c.notis, c.aterkom_datum FROM bolag b JOIN crm.crm_bolag c ON c.orgnr = b.orgnr LIMIT ${limit};
 
 Fråga: it-konsulter i norrland med historik per år
 SQL: SELECT b.orgnr, b.orgnamn, ar.rakenskapsar_slut, ar.nettoomsattning FROM bolag b JOIN arsredovisningar ar ON ar.orgnr = b.orgnr WHERE ulow(b.postort) LIKE '%norrland%' AND (ulow(b.sni_1_namn) LIKE '%it-konsult%' OR ulow(b.verksamhet) LIKE '%it-konsult%') ORDER BY b.orgnr, ar.rakenskapsar_slut DESC LIMIT ${limit};
