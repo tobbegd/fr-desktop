@@ -50,13 +50,14 @@
   let map: L.Map | null = null;
   let waypoints: Waypoint[] = [];
   let routeLayer: L.GeoJSON | null = null;
+  let timeControl: L.Control | null = null;
 
   let routeMode = $state(false);
   let startIdx = $state<number | null>(null);
   let routeLoading = $state(false);
   let routeError = $state("");
   let routeOrder = $state<number[] | null>(null);
-  type RouteStep = { label: string; wpIdx: number | null; isVia: boolean; stopNum?: number };
+  type RouteStep = { label: string; wpIdx: number | null; isVia: boolean; stopNum?: number; lat: number; lon: number };
   let routeSteps = $state<RouteStep[] | null>(null);
   let routeLegs = $state<{ duration: number; distance: number }[]>([]);
   let routeTotal = $state<{ duration: number; distance: number } | null>(null);
@@ -160,11 +161,32 @@
 
   function clearRoute() {
     if (routeLayer && map) { map.removeLayer(routeLayer); routeLayer = null; }
+    if (timeControl && map) { map.removeControl(timeControl); timeControl = null; }
   }
 
   function clearViaPoints() {
     viaPoints.forEach(v => map?.removeLayer(v.marker));
     viaPoints = [];
+  }
+
+  function buildTimeOverlay() {
+    if (timeControl && map) { map.removeControl(timeControl); timeControl = null; }
+    if (!routeTotal || !map) return;
+
+    const TimeControl = L.Control.extend({
+      onAdd: () => {
+        const div = L.DomUtil.create("div");
+        div.style.cssText =
+          "background: rgba(9,9,11,0.88); border: 1px solid rgba(63,63,70,0.9); border-radius: 8px; " +
+          "padding: 6px 10px; font-family: sans-serif; color: #e4e4e7; box-shadow: 0 2px 8px rgba(0,0,0,0.4);";
+        div.innerHTML =
+          `<div style="font-size:12px;font-weight:600;">Total restid: ${formatDuration(routeTotal!.duration)}</div>` +
+          `<div style="font-size:10px;color:#a1a1aa;">${formatDistance(routeTotal!.distance)}</div>`;
+        return div;
+      },
+    });
+    timeControl = new TimeControl({ position: "bottomright" });
+    timeControl.addTo(map);
   }
 
   function clearCustomStart() {
@@ -312,6 +334,8 @@
         wpIdx: s.wpIdx,
         isVia: s.isVia,
         stopNum: s.wpIdx !== null ? routeOrder!.indexOf(s.wpIdx) + 1 : undefined,
+        lat: s.lat,
+        lon: s.lon,
       }));
       routeLegs = legs;
       routeTotal = legs.reduce(
@@ -326,6 +350,7 @@
       }) as unknown as L.GeoJSONOptions).addTo(map!);
       map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
 
+      buildTimeOverlay();
       refreshMarkerIcons();
     } catch (e) {
       routeError = String(e);
