@@ -56,9 +56,10 @@
   let routeLoading = $state(false);
   let routeError = $state("");
   let routeOrder = $state<number[] | null>(null);
+  type RouteStep = { label: string; wpIdx: number | null; isVia: boolean; stopNum?: number };
+  let routeSteps = $state<RouteStep[] | null>(null);
   let routeLegs = $state<{ duration: number; distance: number }[]>([]);
   let routeTotal = $state<{ duration: number; distance: number } | null>(null);
-  let startLeg = $state<{ duration: number; distance: number } | null>(null);
   let viaMode = $state(false);
   let viaPoints = $state<ViaPoint[]>([]);
   let customStart = $state<CustomStart | null>(null);
@@ -144,9 +145,9 @@
     } else {
       startIdx = null;
       routeOrder = null;
+      routeSteps = null;
       routeLegs = [];
       routeTotal = null;
-      startLeg = null;
       routeError = "";
       viaMode = false;
       clearViaPoints();
@@ -252,80 +253,85 @@
         visitSeq[w.waypoint_index] = points[inputIdx].wpIndex;
       });
 
-      // routeOrder holds only the real bolag stops, in visit order (the
-      // custom start, if any, is always visitSeq[0] = null and rendered
-      // separately in the UI/PDF rather than via routeOrder/waypoints).
+      // routeOrder holds only the real bolag stops, in visit order (used by
+      // the marker numbering and the "N. bolagsnamn" icons on the map).
       routeOrder = visitSeq.filter((v): v is number => v !== null);
 
-      if (viaPoints.length === 0) {
-        const legs = trip.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
-        startLeg = customStart ? legs[0] : null;
-        routeLegs = customStart ? legs.slice(1) : legs;
-        routeTotal = { duration: trip.duration, distance: trip.distance };
+      // Build the full step list (start + bolag stops, via-points inserted
+      // at their best position) that both the geometry fetch and the UI
+      // list / PDF export walk together, so every point — including
+      // via-points — gets its own labeled leg and nothing is silently
+      // folded into a neighboring leg's duration.
+      type Step = { lat: number; lon: number; label: string; wpIdx: number | null; isVia: boolean };
+      const steps: Step[] = visitSeq.map(v =>
+        v === null
+          ? { lat: customStart!.lat, lon: customStart!.lon, label: "Fri startpunkt", wpIdx: null, isVia: false }
+          : { lat: waypoints[v].lat, lon: waypoints[v].lon, label: waypoints[v].items.map(b => b.orgnamn).join(", "), wpIdx: v, isVia: false }
+      );
 
-        const canvasRenderer = L.canvas();
-        routeLayer = L.geoJSON(trip.geometry, ({
-          style: { color: "#22c55e", weight: 3, opacity: 0.85 },
-          renderer: canvasRenderer,
-        }) as unknown as L.GeoJSONOptions).addTo(map!);
-        map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
-      } else {
-        // Insert each via-point into whichever leg minimizes the detour,
-        // then re-fetch the route through /route/ so the via-points force
-        // the path without being counted as visit stops.
-        type SeqItem = { lat: number; lon: number; isStop: boolean };
-        const seq: SeqItem[] = visitSeq.map(v =>
-          v === null
-            ? { lat: customStart!.lat, lon: customStart!.lon, isStop: true }
-            : { lat: waypoints[v].lat, lon: waypoints[v].lon, isStop: true }
-        );
-
-        for (const via of viaPoints) {
-          let bestLeg = 0;
-          let bestCost = Infinity;
-          for (let i = 0; i < seq.length - 1; i++) {
-            const a = seq[i], b = seq[i + 1];
-            const cost = haversine(a.lat, a.lon, via.lat, via.lon) + haversine(via.lat, via.lon, b.lat, b.lon) - haversine(a.lat, a.lon, b.lat, b.lon);
-            if (cost < bestCost) { bestCost = cost; bestLeg = i; }
-          }
-          // Insert right after position bestLeg, before the next stop — but
-          // if multiple vias land in the same leg, find insertion point among
-          // items already inserted there too (re-scan each time is fine, small N).
-          let insertAt = bestLeg + 1;
-          seq.splice(insertAt, 0, { lat: via.lat, lon: via.lon, isStop: false });
+      for (const [viaIdx, via] of viaPoints.entries()) {
+        let bestLeg = 0;
+        let bestCost = Infinity;
+        for (let i = 0; i < steps.length - 1; i++) {
+          const a = steps[i], b = steps[i + 1];
+          const cost = haversine(a.lat, a.lon, via.lat, via.lon) + haversine(via.lat, via.lon, b.lat, b.lon) - haversine(a.lat, a.lon, b.lat, b.lon);
+          if (cost < bestCost) { bestCost = cost; bestLeg = i; }
         }
+        // Insert right after position bestLeg, before the next stop — if
+        // multiple vias land in the same leg this re-scans against the
+        // already-inserted ones too, which is fine for the small N here.
+        steps.splice(bestLeg + 1, 0, { lat: via.lat, lon: via.lon, label: `Tillagd punkt ${viaIdx + 1}`, wpIdx: null, isVia: true });
+      }
 
-        const fullCoords = seq.map(p => `${p.lon},${p.lat}`).join(";");
-        const stopIndices = seq.map((p, i) => (p.isStop ? i : -1)).filter(i => i >= 0);
+      let legs: { duration: number; distance: number }[];
+      let geometry: unknown;
 
+      if (viaPoints.length === 0) {
+        legs = trip.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        geometry = trip.geometry;
+      } else {
+        // Re-fetch via /route/ with every point as its own waypoint (no
+        // `waypoints=` filter) so OSRM returns one leg per consecutive pair
+        // — including the legs on either side of a via-point — instead of
+        // folding a via-point's detour into one existing bolag-to-bolag leg.
+        const fullCoords = steps.map(s => `${s.lon},${s.lat}`).join(";");
         const routeRes = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${fullCoords}?waypoints=${stopIndices.join(";")}&overview=full&geometries=geojson`,
+          `https://router.project-osrm.org/route/v1/driving/${fullCoords}?overview=full&geometries=geojson`,
           { signal: AbortSignal.timeout(15000) }
         );
         if (!routeRes.ok) throw new Error(`OSRM ${routeRes.status}`);
         const routeData = await routeRes.json();
         if (routeData.code !== "Ok") throw new Error(routeData.message ?? routeData.code);
-
         const route = routeData.routes[0];
-        const legs = route.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
-        startLeg = customStart ? legs[0] : null;
-        routeLegs = customStart ? legs.slice(1) : legs;
-        routeTotal = { duration: route.duration, distance: route.distance };
-
-        const canvasRenderer = L.canvas();
-        routeLayer = L.geoJSON(route.geometry, ({
-          style: { color: "#22c55e", weight: 3, opacity: 0.85 },
-          renderer: canvasRenderer,
-        }) as unknown as L.GeoJSONOptions).addTo(map!);
-        map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
+        legs = route.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        geometry = route.geometry;
       }
+
+      routeSteps = steps.map((s, i) => ({
+        label: s.label,
+        wpIdx: s.wpIdx,
+        isVia: s.isVia,
+        stopNum: s.wpIdx !== null ? routeOrder!.indexOf(s.wpIdx) + 1 : undefined,
+      }));
+      routeLegs = legs;
+      routeTotal = legs.reduce(
+        (acc, l) => ({ duration: acc.duration + l.duration, distance: acc.distance + l.distance }),
+        { duration: 0, distance: 0 }
+      );
+
+      const canvasRenderer = L.canvas();
+      routeLayer = L.geoJSON(geometry as GeoJSON.GeoJsonObject, ({
+        style: { color: "#22c55e", weight: 3, opacity: 0.85 },
+        renderer: canvasRenderer,
+      }) as unknown as L.GeoJSONOptions).addTo(map!);
+      map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
 
       refreshMarkerIcons();
     } catch (e) {
       routeError = String(e);
+      routeSteps = null;
       routeLegs = [];
       routeTotal = null;
-      startLeg = null;
     } finally {
       routeLoading = false;
     }
@@ -546,7 +552,7 @@
       pdf.addImage(imgData, "JPEG", offsetX, margin, mapW, mapH);
 
       // Stop list on page 2 if route calculated
-      if (routeOrder && routeOrder.length > 0) {
+      if (routeSteps && routeSteps.length > 0) {
         pdf.addPage();
         let y = margin + 6;
         pdf.setFontSize(10);
@@ -559,24 +565,18 @@
         pdf.setFontSize(8);
         pdf.setTextColor(40, 40, 40);
         const colW = (pageW - margin * 2) / 2;
-        type PdfRow = { label: string; leg: { duration: number; distance: number } | null };
-        const rows: PdfRow[] = [];
-        if (customStart) rows.push({ label: "Fri startpunkt", leg: startLeg });
-        routeOrder.forEach((wpIdx, pos) => {
-          const wp = waypoints[wpIdx];
-          const name = wp.items.map(b => b.orgnamn).join(", ");
-          const addr = wp.items[0]?.gatuadress ?? wp.items[0]?.postort ?? "";
+        routeSteps.forEach((step, pos) => {
+          const wp = step.wpIdx !== null ? waypoints[step.wpIdx] : null;
+          const addr = wp ? (wp.items[0]?.gatuadress ?? wp.items[0]?.postort ?? "") : "";
           const leg = pos < routeLegs.length ? routeLegs[pos] : null;
-          rows.push({ label: `${name}${addr ? " — " + addr : ""}`, leg });
-        });
-        rows.forEach((row, pos) => {
-          const legLabel = row.leg ? ` (${formatDuration(row.leg.duration)} till nästa)` : "";
+          const legLabel = leg ? ` (${formatDuration(leg.duration)} till nästa)` : "";
+          const prefix = step.isVia ? "" : `${step.stopNum}. `;
           const col = pos % 2 === 0 ? 0 : 1;
           const rowIdx = Math.floor(pos / 2);
           const x = margin + col * colW;
           const rowY = y + rowIdx * 5.5;
           if (rowY < pageH - margin) {
-            pdf.text(`${pos + 1}. ${row.label}${legLabel}`, x, rowY, { maxWidth: colW - 4 });
+            pdf.text(`${prefix}${step.label}${addr ? " — " + addr : ""}${legLabel}`, x, rowY, { maxWidth: colW - 4 });
           }
         });
       }
@@ -712,7 +712,7 @@
   {/if}
 
   <div class="relative flex-1 min-h-0">
-    {#if routeOrder && routeTotal}
+    {#if routeSteps && routeTotal}
       <div class="absolute left-3 top-3 bottom-3 z-[1000] w-64 flex flex-col rounded-lg border border-zinc-700 bg-zinc-950/95 shadow-xl overflow-hidden">
         <div class="shrink-0 px-3 py-2.5 border-b border-zinc-800">
           <span class="text-xs font-semibold text-zinc-200">
@@ -721,16 +721,10 @@
           <div class="text-[11px] text-zinc-500">{formatDistance(routeTotal.distance)}</div>
         </div>
         <div class="flex-1 overflow-y-auto px-3 py-2.5">
-          {#if customStart}
-            <div class="text-xs text-purple-300 leading-snug">★ Fri startpunkt</div>
-            {#if startLeg}
-              <div class="pl-3 py-1 text-[11px] text-zinc-500 border-l border-zinc-700 ml-1.5">
-                ↓ {formatDuration(startLeg.duration)} ({formatDistance(startLeg.distance)})
-              </div>
-            {/if}
-          {/if}
-          {#each routeOrder as wpIdx, pos (wpIdx)}
-            <div class="text-xs text-zinc-200 leading-snug">{pos + 1}. {waypoints[wpIdx].items.map(b => b.orgnamn).join(", ")}</div>
+          {#each routeSteps as step, pos (pos)}
+            <div class="text-xs leading-snug {step.isVia ? 'text-purple-300' : 'text-zinc-200'}">
+              {step.isVia ? "• " : step.wpIdx === null ? "★ " : `${step.stopNum}. `}{step.label}
+            </div>
             {#if pos < routeLegs.length}
               <div class="pl-3 py-1 text-[11px] text-zinc-500 border-l border-zinc-700 ml-1.5">
                 ↓ {formatDuration(routeLegs[pos].duration)} ({formatDistance(routeLegs[pos].distance)})
