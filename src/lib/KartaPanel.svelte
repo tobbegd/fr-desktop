@@ -153,6 +153,19 @@
     viaPoints = [];
   }
 
+  function resetRoute() {
+    startIdx = null;
+    routeOrder = null;
+    routeLegs = [];
+    routeTotal = null;
+    routeError = "";
+    viaMode = false;
+    if (map) map.getContainer().style.cursor = "";
+    clearViaPoints();
+    clearRoute();
+    refreshMarkerIcons();
+  }
+
   function toggleViaMode() {
     viaMode = !viaMode;
     if (map) map.getContainer().style.cursor = viaMode ? "crosshair" : "";
@@ -606,6 +619,12 @@
         disabled={startIdx === null || routeLoading}
         onclick={calcRoute}
       >{routeLoading ? "Beräknar..." : "Beräkna rutt"}</button>
+      {#if startIdx !== null || routeOrder || viaPoints.length > 0}
+        <button
+          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+          onclick={resetRoute}
+        >Återställ</button>
+      {/if}
       <button
         class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
         onclick={toggleRouteMode}
@@ -644,24 +663,28 @@
     <div class="shrink-0 px-5 py-2 text-xs text-yellow-600 border-b border-zinc-800">Varning: området är för stort — resultatet är avkortat. Rita en mindre markering.</div>
   {/if}
 
-  {#if routeOrder && routeTotal}
-    <div class="shrink-0 px-5 py-2.5 border-b border-zinc-800 overflow-x-auto">
-      <div class="flex items-center gap-2 text-xs whitespace-nowrap">
-        <span class="font-semibold text-zinc-200">
-          Total restid: {formatDuration(routeTotal.duration)} ({formatDistance(routeTotal.distance)})
-        </span>
-        <span class="text-zinc-600">·</span>
-        {#each routeOrder as wpIdx, pos (wpIdx)}
-          <span class="text-zinc-300">{pos + 1}. {waypoints[wpIdx].items.map(b => b.orgnamn).join(", ")}</span>
-          {#if pos < routeLegs.length}
-            <span class="text-zinc-500">
-              — {formatDuration(routeLegs[pos].duration)} ({formatDistance(routeLegs[pos].distance)}) →
-            </span>
-          {/if}
-        {/each}
+  <div class="relative flex-1 min-h-0">
+    {#if routeOrder && routeTotal}
+      <div class="absolute left-3 top-3 bottom-3 z-[1000] w-64 flex flex-col rounded-lg border border-zinc-700 bg-zinc-950/95 shadow-xl overflow-hidden">
+        <div class="shrink-0 px-3 py-2.5 border-b border-zinc-800">
+          <span class="text-xs font-semibold text-zinc-200">
+            Total restid: {formatDuration(routeTotal.duration)}
+          </span>
+          <div class="text-[11px] text-zinc-500">{formatDistance(routeTotal.distance)}</div>
+        </div>
+        <div class="flex-1 overflow-y-auto px-3 py-2.5">
+          {#each routeOrder as wpIdx, pos (wpIdx)}
+            <div class="text-xs text-zinc-200 leading-snug">{pos + 1}. {waypoints[wpIdx].items.map(b => b.orgnamn).join(", ")}</div>
+            {#if pos < routeLegs.length}
+              <div class="pl-3 py-1 text-[11px] text-zinc-500 border-l border-zinc-700 ml-1.5">
+                ↓ {formatDuration(routeLegs[pos].duration)} ({formatDistance(routeLegs[pos].distance)})
+              </div>
+            {/if}
+          {/each}
+        </div>
       </div>
-    </div>
-  {/if}
+    {/if}
 
-  <div class="flex-1 min-h-0" bind:this={mapEl}></div>
+    <div class="absolute inset-0" bind:this={mapEl}></div>
+  </div>
 </div>
