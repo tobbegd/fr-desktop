@@ -595,7 +595,7 @@
           const addr = wp ? (wp.items[0]?.gatuadress ?? wp.items[0]?.postort ?? "") : "";
           const leg = pos < routeLegs.length ? routeLegs[pos] : null;
           const legLabel = leg ? ` (${formatDuration(leg.duration)} till nästa)` : "";
-          const prefix = step.isVia ? "" : `${step.stopNum}. `;
+          const prefix = step.isVia ? "" : step.wpIdx === null ? "★ " : `${step.stopNum}. `;
           const col = pos % 2 === 0 ? 0 : 1;
           const rowIdx = Math.floor(pos / 2);
           const x = margin + col * colW;
