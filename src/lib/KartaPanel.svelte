@@ -31,6 +31,12 @@
     marker: L.CircleMarker;
   };
 
+  type CustomStart = {
+    lat: number;
+    lon: number;
+    marker: L.Marker;
+  };
+
   type Props = {
     bolag: Bolag[];
     onclose: () => void;
@@ -52,8 +58,11 @@
   let routeOrder = $state<number[] | null>(null);
   let routeLegs = $state<{ duration: number; distance: number }[]>([]);
   let routeTotal = $state<{ duration: number; distance: number } | null>(null);
+  let startLeg = $state<{ duration: number; distance: number } | null>(null);
   let viaMode = $state(false);
   let viaPoints = $state<ViaPoint[]>([]);
+  let startMode = $state(false);
+  let customStart = $state<CustomStart | null>(null);
 
   function formatDuration(seconds: number): string {
     const totalMin = Math.round(seconds / 60);
@@ -136,9 +145,12 @@
       routeOrder = null;
       routeLegs = [];
       routeTotal = null;
+      startLeg = null;
       routeError = "";
       viaMode = false;
+      startMode = false;
       clearViaPoints();
+      clearCustomStart();
       clearRoute();
       refreshMarkerIcons();
     }
@@ -153,15 +165,38 @@
     viaPoints = [];
   }
 
+  function clearCustomStart() {
+    if (customStart) map?.removeLayer(customStart.marker);
+    customStart = null;
+  }
+
+  function toggleStartMode() {
+    startMode = !startMode;
+    if (map) map.getContainer().style.cursor = startMode ? "crosshair" : "";
+  }
+
+  function setCustomStart(latlng: L.LatLng) {
+    clearCustomStart();
+    startIdx = null;
+    const marker = L.marker(latlng, { icon: makeIcon(1, true, undefined, true) });
+    marker.bindPopup("Startpunkt", { maxWidth: 200 });
+    marker.addTo(map!);
+    customStart = { lat: latlng.lat, lon: latlng.lng, marker };
+    refreshMarkerIcons();
+  }
+
   function resetRoute() {
     startIdx = null;
     routeOrder = null;
     routeLegs = [];
     routeTotal = null;
+    startLeg = null;
     routeError = "";
     viaMode = false;
+    startMode = false;
     if (map) map.getContainer().style.cursor = "";
     clearViaPoints();
+    clearCustomStart();
     clearRoute();
     refreshMarkerIcons();
   }
@@ -196,14 +231,28 @@
   }
 
   async function calcRoute() {
-    if (startIdx === null || waypoints.length < 2) return;
+    const hasStart = startIdx !== null || customStart !== null;
+    const minStops = customStart ? 1 : 2;
+    if (!hasStart || waypoints.length < minStops) return;
     routeLoading = true;
     routeError = "";
     clearRoute();
 
-    // Reorder: start first
-    const ordered = [startIdx, ...waypoints.map((_, i) => i).filter(i => i !== startIdx)];
-    const coords = ordered.map(i => `${waypoints[i].lon},${waypoints[i].lat}`).join(";");
+    // Build the ordered coordinate list sent to OSRM: position 0 is always
+    // the start (either a real bolag waypoint, or the free-standing custom
+    // start point), followed by all remaining bolag waypoints. We track the
+    // original `waypoints` array index for each entry so we can map OSRM's
+    // visit order back correctly (null = the custom start, not a real stop).
+    type TripPoint = { lat: number; lon: number; wpIndex: number | null };
+    const points: TripPoint[] = [];
+    if (customStart) {
+      points.push({ lat: customStart.lat, lon: customStart.lon, wpIndex: null });
+      waypoints.forEach((wp, i) => points.push({ lat: wp.lat, lon: wp.lon, wpIndex: i }));
+    } else {
+      points.push({ lat: waypoints[startIdx!].lat, lon: waypoints[startIdx!].lon, wpIndex: startIdx });
+      waypoints.forEach((wp, i) => { if (i !== startIdx) points.push({ lat: wp.lat, lon: wp.lon, wpIndex: i }); });
+    }
+    const coords = points.map(p => `${p.lon},${p.lat}`).join(";");
 
     try {
       const res = await fetch(
@@ -214,17 +263,24 @@
       const data = await res.json();
       if (data.code !== "Ok") throw new Error(data.message ?? data.code);
 
-      // Build route order from waypoints_index in trips
+      // data.waypoints is in INPUT order; each entry's waypoint_index is its
+      // position in the visit order. Place each input point at that visit
+      // position to get the trip sequence (wpIndex, null for custom start).
       const trip = data.trips[0];
-      const waypointOrder: number[] = data.waypoints
-        .slice()
-        .sort((a: { waypoint_index: number }, b: { waypoint_index: number }) => a.waypoint_index - b.waypoint_index)
-        .map((w: { trips_index: number; waypoint_index: number }, i: number) => ordered[i]);
+      const visitSeq: (number | null)[] = new Array(points.length);
+      data.waypoints.forEach((w: { waypoint_index: number }, inputIdx: number) => {
+        visitSeq[w.waypoint_index] = points[inputIdx].wpIndex;
+      });
 
-      routeOrder = waypointOrder;
+      // routeOrder holds only the real bolag stops, in visit order (the
+      // custom start, if any, is always visitSeq[0] = null and rendered
+      // separately in the UI/PDF rather than via routeOrder/waypoints).
+      routeOrder = visitSeq.filter((v): v is number => v !== null);
 
       if (viaPoints.length === 0) {
-        routeLegs = trip.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        const legs = trip.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        startLeg = customStart ? legs[0] : null;
+        routeLegs = customStart ? legs.slice(1) : legs;
         routeTotal = { duration: trip.duration, distance: trip.distance };
 
         const canvasRenderer = L.canvas();
@@ -238,7 +294,11 @@
         // then re-fetch the route through /route/ so the via-points force
         // the path without being counted as visit stops.
         type SeqItem = { lat: number; lon: number; isStop: boolean };
-        const seq: SeqItem[] = waypointOrder.map(i => ({ lat: waypoints[i].lat, lon: waypoints[i].lon, isStop: true }));
+        const seq: SeqItem[] = visitSeq.map(v =>
+          v === null
+            ? { lat: customStart!.lat, lon: customStart!.lon, isStop: true }
+            : { lat: waypoints[v].lat, lon: waypoints[v].lon, isStop: true }
+        );
 
         for (const via of viaPoints) {
           let bestLeg = 0;
@@ -267,7 +327,9 @@
         if (routeData.code !== "Ok") throw new Error(routeData.message ?? routeData.code);
 
         const route = routeData.routes[0];
-        routeLegs = route.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        const legs = route.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        startLeg = customStart ? legs[0] : null;
+        routeLegs = customStart ? legs.slice(1) : legs;
         routeTotal = { duration: route.duration, distance: route.distance };
 
         const canvasRenderer = L.canvas();
@@ -283,6 +345,7 @@
       routeError = String(e);
       routeLegs = [];
       routeTotal = null;
+      startLeg = null;
     } finally {
       routeLoading = false;
     }
@@ -408,6 +471,7 @@
     }).addTo(map);
 
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (startMode) { setCustomStart(e.latlng); return; }
       if (viaMode) { addViaPoint(e.latlng); return; }
       if (!drawMode) return;
       drawPoints = [...drawPoints, e.latlng];
@@ -436,7 +500,7 @@
         const marker = L.marker([b.lat, b.lon], { icon: makeIcon(1, true) });
         marker.bindPopup(buildPopup([b]), { maxWidth: 280 });
         marker.on("click", () => {
-          if (routeMode) { startIdx = idx; refreshMarkerIcons(); }
+          if (routeMode) { clearCustomStart(); startIdx = idx; refreshMarkerIcons(); }
         });
         marker.addTo(map!);
         wp.marker = marker;
@@ -459,7 +523,7 @@
       const marker = L.marker([lat, lon], { icon: makeIcon(items.length, false) });
       marker.bindPopup(buildPopup(items), { maxWidth: 280 });
       marker.on("click", () => {
-        if (routeMode) { startIdx = idx; refreshMarkerIcons(); }
+        if (routeMode) { clearCustomStart(); startIdx = idx; refreshMarkerIcons(); }
       });
       marker.addTo(map!);
       wp.marker = marker;
@@ -515,18 +579,24 @@
         pdf.setFontSize(8);
         pdf.setTextColor(40, 40, 40);
         const colW = (pageW - margin * 2) / 2;
+        type PdfRow = { label: string; leg: { duration: number; distance: number } | null };
+        const rows: PdfRow[] = [];
+        if (customStart) rows.push({ label: "Fri startpunkt", leg: startLeg });
         routeOrder.forEach((wpIdx, pos) => {
           const wp = waypoints[wpIdx];
           const name = wp.items.map(b => b.orgnamn).join(", ");
           const addr = wp.items[0]?.gatuadress ?? wp.items[0]?.postort ?? "";
           const leg = pos < routeLegs.length ? routeLegs[pos] : null;
-          const legLabel = leg ? ` (${formatDuration(leg.duration)} till nästa)` : "";
+          rows.push({ label: `${name}${addr ? " — " + addr : ""}`, leg });
+        });
+        rows.forEach((row, pos) => {
+          const legLabel = row.leg ? ` (${formatDuration(row.leg.duration)} till nästa)` : "";
           const col = pos % 2 === 0 ? 0 : 1;
-          const row = Math.floor(pos / 2);
+          const rowIdx = Math.floor(pos / 2);
           const x = margin + col * colW;
-          const rowY = y + row * 5.5;
+          const rowY = y + rowIdx * 5.5;
           if (rowY < pageH - margin) {
-            pdf.text(`${pos + 1}. ${name}${addr ? " — " + addr : ""}${legLabel}`, x, rowY, { maxWidth: colW - 4 });
+            pdf.text(`${pos + 1}. ${row.label}${legLabel}`, x, rowY, { maxWidth: colW - 4 });
           }
         });
       }
@@ -599,9 +669,14 @@
       >Rensa markering</button>
     {:else if routeMode}
       <span class="text-xs text-zinc-400">
-        {#if startIdx === null}Klicka på en pin för att sätta startpunkt{:else}Startpunkt vald — {waypoints.length} stopp{/if}
+        {#if startIdx === null && !customStart}Klicka på en pin eller "Fri startpunkt" nedan{:else if customStart}Fri startpunkt vald — {waypoints.length} stopp{:else}Startpunkt vald — {waypoints.length} stopp{/if}
         {#if viaPoints.length > 0}· {viaPoints.length} tvingande punkt{viaPoints.length !== 1 ? "er" : ""}{/if}
       </span>
+      <button
+        class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
+          {startMode ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
+        onclick={toggleStartMode}
+      >{startMode ? "Klicka på kartan..." : "Fri startpunkt"}</button>
       <button
         class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
           {viaMode ? 'bg-purple-700 hover:bg-purple-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
@@ -615,11 +690,11 @@
       {/if}
       <button
         class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
-          {startIdx !== null && !routeLoading ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500 cursor-default'}"
-        disabled={startIdx === null || routeLoading}
+          {(startIdx !== null || customStart) && !routeLoading ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500 cursor-default'}"
+        disabled={(startIdx === null && !customStart) || routeLoading}
         onclick={calcRoute}
       >{routeLoading ? "Beräknar..." : "Beräkna rutt"}</button>
-      {#if startIdx !== null || routeOrder || viaPoints.length > 0}
+      {#if startIdx !== null || customStart || routeOrder || viaPoints.length > 0}
         <button
           class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
           onclick={resetRoute}
@@ -673,6 +748,14 @@
           <div class="text-[11px] text-zinc-500">{formatDistance(routeTotal.distance)}</div>
         </div>
         <div class="flex-1 overflow-y-auto px-3 py-2.5">
+          {#if customStart}
+            <div class="text-xs text-purple-300 leading-snug">★ Fri startpunkt</div>
+            {#if startLeg}
+              <div class="pl-3 py-1 text-[11px] text-zinc-500 border-l border-zinc-700 ml-1.5">
+                ↓ {formatDuration(startLeg.duration)} ({formatDistance(startLeg.distance)})
+              </div>
+            {/if}
+          {/if}
           {#each routeOrder as wpIdx, pos (wpIdx)}
             <div class="text-xs text-zinc-200 leading-snug">{pos + 1}. {waypoints[wpIdx].items.map(b => b.orgnamn).join(", ")}</div>
             {#if pos < routeLegs.length}
