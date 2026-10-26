@@ -427,6 +427,8 @@
         { label: "Dokumentation", action: () => {}, disabled: true },
         { separator: true },
         { label: "Öppna AI-hjälp", action: () => searchArea?.triggerHelp() },
+        { separator: true },
+        { label: "Support", action: () => openUrl("https://foretagsdatabas.se") },
       ],
     },
   ]);
