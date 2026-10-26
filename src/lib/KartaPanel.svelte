@@ -25,6 +25,12 @@
     marker: L.Marker;
   };
 
+  type ViaPoint = {
+    lat: number;
+    lon: number;
+    marker: L.CircleMarker;
+  };
+
   type Props = {
     bolag: Bolag[];
     onclose: () => void;
@@ -44,6 +50,23 @@
   let routeLoading = $state(false);
   let routeError = $state("");
   let routeOrder = $state<number[] | null>(null);
+  let routeLegs = $state<{ duration: number; distance: number }[]>([]);
+  let routeTotal = $state<{ duration: number; distance: number } | null>(null);
+  let viaMode = $state(false);
+  let viaPoints = $state<ViaPoint[]>([]);
+
+  function formatDuration(seconds: number): string {
+    const totalMin = Math.round(seconds / 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h === 0) return `${m} min`;
+    return `${h} tim ${m} min`;
+  }
+
+  function formatDistance(meters: number): string {
+    const km = meters / 1000;
+    return km >= 10 ? `${Math.round(km)} km` : `${km.toFixed(1)} km`;
+  }
 
   let drawMode = $state(false);
   let drawPoints = $state<L.LatLng[]>([]);
@@ -111,7 +134,11 @@
     if (!routeMode) {
       startIdx = null;
       routeOrder = null;
+      routeLegs = [];
+      routeTotal = null;
       routeError = "";
+      viaMode = false;
+      clearViaPoints();
       clearRoute();
       refreshMarkerIcons();
     }
@@ -119,6 +146,40 @@
 
   function clearRoute() {
     if (routeLayer && map) { map.removeLayer(routeLayer); routeLayer = null; }
+  }
+
+  function clearViaPoints() {
+    viaPoints.forEach(v => map?.removeLayer(v.marker));
+    viaPoints = [];
+  }
+
+  function toggleViaMode() {
+    viaMode = !viaMode;
+    if (map) map.getContainer().style.cursor = viaMode ? "crosshair" : "";
+  }
+
+  function addViaPoint(latlng: L.LatLng) {
+    const marker = L.circleMarker(latlng, {
+      radius: 7, color: "#fff", fillColor: "#a855f7",
+      fillOpacity: 1, weight: 2,
+    }).bindTooltip("Tvingande punkt", { permanent: false });
+    marker.addTo(map!);
+    viaPoints = [...viaPoints, { lat: latlng.lat, lon: latlng.lng, marker }];
+  }
+
+  function removeViaPoint(idx: number) {
+    const v = viaPoints[idx];
+    if (v) map?.removeLayer(v.marker);
+    viaPoints = viaPoints.filter((_, i) => i !== idx);
+  }
+
+  function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
   }
 
   async function calcRoute() {
@@ -148,17 +209,67 @@
         .map((w: { trips_index: number; waypoint_index: number }, i: number) => ordered[i]);
 
       routeOrder = waypointOrder;
+
+      if (viaPoints.length === 0) {
+        routeLegs = trip.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        routeTotal = { duration: trip.duration, distance: trip.distance };
+
+        const canvasRenderer = L.canvas();
+        routeLayer = L.geoJSON(trip.geometry, ({
+          style: { color: "#22c55e", weight: 3, opacity: 0.85 },
+          renderer: canvasRenderer,
+        }) as unknown as L.GeoJSONOptions).addTo(map!);
+        map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
+      } else {
+        // Insert each via-point into whichever leg minimizes the detour,
+        // then re-fetch the route through /route/ so the via-points force
+        // the path without being counted as visit stops.
+        type SeqItem = { lat: number; lon: number; isStop: boolean };
+        const seq: SeqItem[] = waypointOrder.map(i => ({ lat: waypoints[i].lat, lon: waypoints[i].lon, isStop: true }));
+
+        for (const via of viaPoints) {
+          let bestLeg = 0;
+          let bestCost = Infinity;
+          for (let i = 0; i < seq.length - 1; i++) {
+            const a = seq[i], b = seq[i + 1];
+            const cost = haversine(a.lat, a.lon, via.lat, via.lon) + haversine(via.lat, via.lon, b.lat, b.lon) - haversine(a.lat, a.lon, b.lat, b.lon);
+            if (cost < bestCost) { bestCost = cost; bestLeg = i; }
+          }
+          // Insert right after position bestLeg, before the next stop — but
+          // if multiple vias land in the same leg, find insertion point among
+          // items already inserted there too (re-scan each time is fine, small N).
+          let insertAt = bestLeg + 1;
+          seq.splice(insertAt, 0, { lat: via.lat, lon: via.lon, isStop: false });
+        }
+
+        const fullCoords = seq.map(p => `${p.lon},${p.lat}`).join(";");
+        const stopIndices = seq.map((p, i) => (p.isStop ? i : -1)).filter(i => i >= 0);
+
+        const routeRes = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${fullCoords}?waypoints=${stopIndices.join(";")}&overview=full&geometries=geojson`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+        if (!routeRes.ok) throw new Error(`OSRM ${routeRes.status}`);
+        const routeData = await routeRes.json();
+        if (routeData.code !== "Ok") throw new Error(routeData.message ?? routeData.code);
+
+        const route = routeData.routes[0];
+        routeLegs = route.legs.map((l: { duration: number; distance: number }) => ({ duration: l.duration, distance: l.distance }));
+        routeTotal = { duration: route.duration, distance: route.distance };
+
+        const canvasRenderer = L.canvas();
+        routeLayer = L.geoJSON(route.geometry, ({
+          style: { color: "#22c55e", weight: 3, opacity: 0.85 },
+          renderer: canvasRenderer,
+        }) as unknown as L.GeoJSONOptions).addTo(map!);
+        map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
+      }
+
       refreshMarkerIcons();
-
-      const canvasRenderer = L.canvas();
-      routeLayer = L.geoJSON(trip.geometry, ({
-        style: { color: "#22c55e", weight: 3, opacity: 0.85 },
-        renderer: canvasRenderer,
-      }) as unknown as L.GeoJSONOptions).addTo(map!);
-
-      map!.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
     } catch (e) {
       routeError = String(e);
+      routeLegs = [];
+      routeTotal = null;
     } finally {
       routeLoading = false;
     }
@@ -284,6 +395,7 @@
     }).addTo(map);
 
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (viaMode) { addViaPoint(e.latlng); return; }
       if (!drawMode) return;
       drawPoints = [...drawPoints, e.latlng];
       updateDrawLayers();
@@ -382,7 +494,10 @@
         let y = margin + 6;
         pdf.setFontSize(10);
         pdf.setTextColor(60, 60, 60);
-        pdf.text("Rutt i körordning:", margin, y);
+        const totalLabel = routeTotal
+          ? `Rutt i körordning — totalt ${formatDuration(routeTotal.duration)} (${formatDistance(routeTotal.distance)}):`
+          : "Rutt i körordning:";
+        pdf.text(totalLabel, margin, y);
         y += 7;
         pdf.setFontSize(8);
         pdf.setTextColor(40, 40, 40);
@@ -391,12 +506,14 @@
           const wp = waypoints[wpIdx];
           const name = wp.items.map(b => b.orgnamn).join(", ");
           const addr = wp.items[0]?.gatuadress ?? wp.items[0]?.postort ?? "";
+          const leg = pos < routeLegs.length ? routeLegs[pos] : null;
+          const legLabel = leg ? ` (${formatDuration(leg.duration)} till nästa)` : "";
           const col = pos % 2 === 0 ? 0 : 1;
           const row = Math.floor(pos / 2);
           const x = margin + col * colW;
           const rowY = y + row * 5.5;
           if (rowY < pageH - margin) {
-            pdf.text(`${pos + 1}. ${name}${addr ? " — " + addr : ""}`, x, rowY, { maxWidth: colW - 4 });
+            pdf.text(`${pos + 1}. ${name}${addr ? " — " + addr : ""}${legLabel}`, x, rowY, { maxWidth: colW - 4 });
           }
         });
       }
@@ -470,7 +587,19 @@
     {:else if routeMode}
       <span class="text-xs text-zinc-400">
         {#if startIdx === null}Klicka på en pin för att sätta startpunkt{:else}Startpunkt vald — {waypoints.length} stopp{/if}
+        {#if viaPoints.length > 0}· {viaPoints.length} tvingande punkt{viaPoints.length !== 1 ? "er" : ""}{/if}
       </span>
+      <button
+        class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
+          {viaMode ? 'bg-purple-700 hover:bg-purple-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
+        onclick={toggleViaMode}
+      >{viaMode ? "Klicka på kartan..." : "Lägg till tvingande punkt"}</button>
+      {#if viaPoints.length > 0}
+        <button
+          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+          onclick={clearViaPoints}
+        >Rensa punkter ({viaPoints.length})</button>
+      {/if}
       <button
         class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
           {startIdx !== null && !routeLoading ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500 cursor-default'}"
@@ -513,6 +642,25 @@
   {/if}
   {#if searchTruncated}
     <div class="shrink-0 px-5 py-2 text-xs text-yellow-600 border-b border-zinc-800">Varning: området är för stort — resultatet är avkortat. Rita en mindre markering.</div>
+  {/if}
+
+  {#if routeOrder && routeTotal}
+    <div class="shrink-0 px-5 py-2.5 border-b border-zinc-800 overflow-x-auto">
+      <div class="flex items-center gap-2 text-xs whitespace-nowrap">
+        <span class="font-semibold text-zinc-200">
+          Total restid: {formatDuration(routeTotal.duration)} ({formatDistance(routeTotal.distance)})
+        </span>
+        <span class="text-zinc-600">·</span>
+        {#each routeOrder as wpIdx, pos (wpIdx)}
+          <span class="text-zinc-300">{pos + 1}. {waypoints[wpIdx].items.map(b => b.orgnamn).join(", ")}</span>
+          {#if pos < routeLegs.length}
+            <span class="text-zinc-500">
+              — {formatDuration(routeLegs[pos].duration)} ({formatDistance(routeLegs[pos].distance)}) →
+            </span>
+          {/if}
+        {/each}
+      </div>
+    </div>
   {/if}
 
   <div class="flex-1 min-h-0" bind:this={mapEl}></div>
