@@ -61,7 +61,6 @@
   let startLeg = $state<{ duration: number; distance: number } | null>(null);
   let viaMode = $state(false);
   let viaPoints = $state<ViaPoint[]>([]);
-  let startMode = $state(false);
   let customStart = $state<CustomStart | null>(null);
 
   function formatDuration(seconds: number): string {
@@ -140,7 +139,9 @@
 
   function toggleRouteMode() {
     routeMode = !routeMode;
-    if (!routeMode) {
+    if (routeMode) {
+      if (map) map.getContainer().style.cursor = "crosshair";
+    } else {
       startIdx = null;
       routeOrder = null;
       routeLegs = [];
@@ -148,10 +149,10 @@
       startLeg = null;
       routeError = "";
       viaMode = false;
-      startMode = false;
       clearViaPoints();
       clearCustomStart();
       clearRoute();
+      if (map) map.getContainer().style.cursor = "";
       refreshMarkerIcons();
     }
   }
@@ -170,34 +171,13 @@
     customStart = null;
   }
 
-  function toggleStartMode() {
-    startMode = !startMode;
-    if (map) map.getContainer().style.cursor = startMode ? "crosshair" : "";
-  }
-
   function setCustomStart(latlng: L.LatLng) {
-    clearCustomStart();
     startIdx = null;
     const marker = L.marker(latlng, { icon: makeIcon(1, true, undefined, true) });
     marker.bindPopup("Startpunkt", { maxWidth: 200 });
     marker.addTo(map!);
     customStart = { lat: latlng.lat, lon: latlng.lng, marker };
-    refreshMarkerIcons();
-  }
-
-  function resetRoute() {
-    startIdx = null;
-    routeOrder = null;
-    routeLegs = [];
-    routeTotal = null;
-    startLeg = null;
-    routeError = "";
-    viaMode = false;
-    startMode = false;
     if (map) map.getContainer().style.cursor = "";
-    clearViaPoints();
-    clearCustomStart();
-    clearRoute();
     refreshMarkerIcons();
   }
 
@@ -471,7 +451,7 @@
     }).addTo(map);
 
     map.on("click", (e: L.LeafletMouseEvent) => {
-      if (startMode) { setCustomStart(e.latlng); return; }
+      if (routeMode && startIdx === null && customStart === null) { setCustomStart(e.latlng); return; }
       if (viaMode) { addViaPoint(e.latlng); return; }
       if (!drawMode) return;
       drawPoints = [...drawPoints, e.latlng];
@@ -500,7 +480,7 @@
         const marker = L.marker([b.lat, b.lon], { icon: makeIcon(1, true) });
         marker.bindPopup(buildPopup([b]), { maxWidth: 280 });
         marker.on("click", () => {
-          if (routeMode) { clearCustomStart(); startIdx = idx; refreshMarkerIcons(); }
+          if (routeMode && startIdx === null && customStart === null) { startIdx = idx; refreshMarkerIcons(); }
         });
         marker.addTo(map!);
         wp.marker = marker;
@@ -668,37 +648,30 @@
         onclick={cancelDraw}
       >Rensa markering</button>
     {:else if routeMode}
-      <span class="text-xs text-zinc-400">
-        {#if startIdx === null && !customStart}Klicka på en pin eller "Fri startpunkt" nedan{:else if customStart}Fri startpunkt vald — {waypoints.length} stopp{:else}Startpunkt vald — {waypoints.length} stopp{/if}
-        {#if viaPoints.length > 0}· {viaPoints.length} tvingande punkt{viaPoints.length !== 1 ? "er" : ""}{/if}
-      </span>
-      <button
-        class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
-          {startMode ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
-        onclick={toggleStartMode}
-      >{startMode ? "Klicka på kartan..." : "Fri startpunkt"}</button>
-      <button
-        class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
-          {viaMode ? 'bg-purple-700 hover:bg-purple-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
-        onclick={toggleViaMode}
-      >{viaMode ? "Klicka på kartan..." : "Lägg till tvingande punkt"}</button>
-      {#if viaPoints.length > 0}
+      {#if startIdx === null && !customStart}
+        <span class="text-xs text-zinc-400">Klicka på ett bolag för att starta där, eller valfri plats på kartan för en fri startpunkt</span>
+      {:else}
+        <span class="text-xs text-zinc-400">
+          {#if customStart}Startpunkt: fri plats{:else}Startpunkt: bolag{/if} — {waypoints.length} stopp
+          {#if viaPoints.length > 0}· {viaPoints.length} tillagd{viaPoints.length !== 1 ? "a" : ""} punkt{viaPoints.length !== 1 ? "er" : ""}{/if}
+        </span>
         <button
-          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
-          onclick={clearViaPoints}
-        >Rensa punkter ({viaPoints.length})</button>
-      {/if}
-      <button
-        class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
-          {(startIdx !== null || customStart) && !routeLoading ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500 cursor-default'}"
-        disabled={(startIdx === null && !customStart) || routeLoading}
-        onclick={calcRoute}
-      >{routeLoading ? "Beräknar..." : "Beräkna rutt"}</button>
-      {#if startIdx !== null || customStart || routeOrder || viaPoints.length > 0}
+          class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
+            {viaMode ? 'bg-purple-700 hover:bg-purple-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}"
+          onclick={toggleViaMode}
+        >{viaMode ? "Klicka på kartan..." : "Lägg till punkt"}</button>
+        {#if viaPoints.length > 0}
+          <button
+            class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+            onclick={clearViaPoints}
+          >Rensa punkter ({viaPoints.length})</button>
+        {/if}
         <button
-          class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
-          onclick={resetRoute}
-        >Återställ</button>
+          class="px-3 py-1.5 text-xs rounded-md font-medium transition-colors cursor-pointer
+            {!routeLoading ? 'bg-green-700 hover:bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500 cursor-default'}"
+          disabled={routeLoading}
+          onclick={calcRoute}
+        >{routeLoading ? "Beräknar..." : routeOrder ? "Beräkna om rutt" : "Beräkna rutt"}</button>
       {/if}
       <button
         class="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
