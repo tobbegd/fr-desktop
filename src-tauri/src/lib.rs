@@ -1054,6 +1054,87 @@ async fn get_utskick_info(app: AppHandle, utskick_id: i64) -> Result<UtskickInfo
     }).await.map_err(|e| e.to_string())?
 }
 
+// Hämtar, per bolag i en säck, hur många ytterligare scrapade kontakt-
+// mail (kontakter-tabellen i stora bolagsdatabasen, kategori person/
+// mailbox) som skulle kunna skickas till utöver huvudmailet + redan
+// manuellt tillagda extra-mottagare (sackar_bolag_extra_email). Används
+// dels för förhandsvisning (PostaOverlay-checkboxen "inkludera scrapade
+// mail"), dels som delad logik med den faktiska sändningen i post_utskick
+// (samma dedupe-regler på båda ställena, annars kan förhandsvisat antal
+// och faktiskt skickat antal divergera).
+fn scraped_candidates_for_bolag(
+    db_conn: &rusqlite::Connection,
+    orgnr: &str,
+    already_seen_lower: &std::collections::HashSet<String>,
+    max_per_bolag: i64,
+) -> Result<Vec<String>, String> {
+    let mut stmt = db_conn.prepare(
+        "SELECT email FROM kontakter \
+         WHERE replace(orgnr, '-', '') = replace(?1, '-', '') \
+         AND kategori IN ('person', 'mailbox') \
+         AND email IS NOT NULL AND email != '' \
+         ORDER BY (kategori = 'person') DESC"
+    ).map_err(|e| e.to_string())?;
+    let candidates: Vec<String> = stmt.query_map([orgnr], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok()).collect();
+    let mut seen = already_seen_lower.clone();
+    let mut result = Vec::new();
+    for c in candidates {
+        if result.len() as i64 >= max_per_bolag { break; }
+        let key = c.to_lowercase();
+        if seen.contains(&key) { continue; }
+        seen.insert(key);
+        result.push(c);
+    }
+    Ok(result)
+}
+
+#[derive(Serialize)]
+struct ScrapePreview {
+    bolag_count: i64,
+    email_count: i64,
+}
+
+#[tauri::command]
+async fn preview_scraped_emails(app: AppHandle, db_path: String, sack_id: i64, max_per_bolag: i64) -> Result<ScrapePreview, String> {
+    let mail_path = get_mail_db_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let mail_conn = open_mail_db(&mail_path)?;
+        let mut stmt = mail_conn.prepare(
+            "SELECT orgnr, email FROM sackar_bolag WHERE sack_id = ?1 AND email != ''"
+        ).map_err(|e| e.to_string())?;
+        let bolag: Vec<(String, String)> = stmt.query_map([sack_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok()).collect();
+
+        let mut extra_stmt = mail_conn.prepare(
+            "SELECT orgnr, email FROM sackar_bolag_extra_email WHERE sack_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let extras: Vec<(String, String)> = extra_stmt.query_map([sack_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok()).collect();
+        let mut extra_map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        for (o, e) in extras {
+            extra_map.entry(o).or_default().insert(e.to_lowercase());
+        }
+
+        let db_conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let mut bolag_count = 0i64;
+        let mut email_count = 0i64;
+        for (orgnr, primary_email) in &bolag {
+            let mut seen = extra_map.get(orgnr).cloned().unwrap_or_default();
+            seen.insert(primary_email.to_lowercase());
+            let found = scraped_candidates_for_bolag(&db_conn, orgnr, &seen, max_per_bolag)?;
+            if !found.is_empty() {
+                bolag_count += 1;
+                email_count += found.len() as i64;
+            }
+        }
+        Ok(ScrapePreview { bolag_count, email_count })
+    }).await.map_err(|e| e.to_string())?
+}
+
 struct CancelSet(std::sync::Mutex<std::collections::HashSet<i64>>);
 
 #[derive(Clone, Serialize)]
@@ -1073,12 +1154,21 @@ async fn cancel_utskick(
     Ok(())
 }
 
+#[derive(Serialize)]
+struct PostUtskickResult {
+    sent: usize,
+    scraped_sent: usize,
+}
+
 #[tauri::command]
 async fn post_utskick(
     app: AppHandle,
     cancel_set: tauri::State<'_, CancelSet>,
     utskick_id: i64,
     hoppa_over_reklamsparr: bool,
+    inkludera_scrapade: bool,
+    max_scrapade_per_bolag: i64,
+    db_path: String,
     host: String,
     port: u16,
     encryption: String,
@@ -1087,7 +1177,7 @@ async fn post_utskick(
     from_name: String,
     from_email: String,
     reply_to: String,
-) -> Result<usize, String> {
+) -> Result<PostUtskickResult, String> {
     let path = get_mail_db_path(&app)?;
 
     let (bolag, sack_id, fordrojning_sek, amne, brodtext, content_type) = tokio::task::spawn_blocking({
@@ -1124,6 +1214,7 @@ async fn post_utskick(
         !hoppa_over_reklamsparr || reklamsparr != "2"
     }).collect();
     let total = bolag.len();
+    let mut scraped_sent: usize = 0;
 
     let creds = Credentials::new(username.clone(), password.clone());
     let mailer: AsyncSmtpTransport<Tokio1Executor> = match encryption.as_str() {
@@ -1147,7 +1238,7 @@ async fn post_utskick(
     for (i, (orgnr, orgnamn, email, _)) in bolag.iter().enumerate() {
         if cancel_set.0.lock().unwrap().remove(&utskick_id) {
             app.emit("utskick-avbruten", utskick_id).ok();
-            return Ok(i);
+            return Ok(PostUtskickResult { sent: i, scraped_sent });
         }
 
         let email = sanitize_email(email);
@@ -1185,12 +1276,20 @@ async fn post_utskick(
             continue;
         }
 
-        // Extra mottagare för samma bolag (sackar_bolag_extra_email) —
-        // får samma mail skickat separat, men bolaget loggas bara en gång
-        // i utskick_logg (huvudmailet räknas som "bolaget klart").
+        // Extra mottagare för samma bolag: dels manuellt tillagda
+        // (sackar_bolag_extra_email, en kontakt i taget via KontakterPanel),
+        // dels — om inkludera_scrapade är ikryssat — ytterligare scrapade
+        // kontaktmail (kontakter-tabellen i dbPath) upp till
+        // max_scrapade_per_bolag st, deduplicerat mot huvudmailet och de
+        // manuella extra-mottagarna. Alla får samma mail skickat separat,
+        // men bolaget loggas bara en gång i utskick_logg (huvudmailet
+        // räknas som "bolaget klart").
         let orgnr_extra = orgnr.clone();
+        let orgnr_scrape = orgnr.clone();
         let path_extra = path.clone();
-        let extra_emails: Vec<String> = tokio::task::spawn_blocking(move || {
+        let db_path_c = db_path.clone();
+        let primary_email_lower = email.to_lowercase();
+        let manual_extra_emails: Vec<String> = tokio::task::spawn_blocking(move || {
             let conn = open_mail_db(&path_extra)?;
             let mut stmt = conn.prepare(
                 "SELECT email FROM sackar_bolag_extra_email WHERE sack_id = ?1 AND orgnr = ?2"
@@ -1202,6 +1301,20 @@ async fn post_utskick(
             .filter_map(|r| r.ok()).collect();
             Ok::<_, String>(emails)
         }).await.map_err(|e| e.to_string())??;
+
+        let scraped_emails: Vec<String> = if inkludera_scrapade {
+            let mut seen: std::collections::HashSet<String> = manual_extra_emails.iter().map(|e| e.to_lowercase()).collect();
+            seen.insert(primary_email_lower);
+            tokio::task::spawn_blocking(move || {
+                let db_conn = rusqlite::Connection::open(&db_path_c).map_err(|e| e.to_string())?;
+                scraped_candidates_for_bolag(&db_conn, &orgnr_scrape, &seen, max_scrapade_per_bolag)
+            }).await.map_err(|e| e.to_string())??
+        } else {
+            Vec::new()
+        };
+        scraped_sent += scraped_emails.len();
+
+        let extra_emails: Vec<String> = manual_extra_emails.into_iter().chain(scraped_emails).collect();
 
         for extra_email in extra_emails {
             let extra_email = sanitize_email(&extra_email);
@@ -1265,7 +1378,7 @@ async fn post_utskick(
         Ok::<_, String>(())
     }).await.map_err(|e| e.to_string())??;
 
-    Ok(total)
+    Ok(PostUtskickResult { sent: total, scraped_sent })
 }
 
 #[tauri::command]
@@ -1540,6 +1653,7 @@ pub fn run() {
             create_utskick,
             delete_utskick,
             get_utskick_info,
+            preview_scraped_emails,
             cancel_utskick,
             post_utskick,
             fetch_questions,

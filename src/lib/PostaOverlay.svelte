@@ -7,12 +7,18 @@
   type Utskick = { id: number; sack_id: number; sack_namn: string; template_id: number; template_namn: string; skapad: string; status: string; fordrojning_sek: number };
   type UtskickInfo = { total: number; reklamsparrade: number; skickade: number; fordrojning_sek: number };
   type Progress = { utskick_id: number; sent: number; total: number; current_orgnamn: string };
+  type ScrapePreview = { bolag_count: number; email_count: number };
+  type PostResult = { sent: number; scraped_sent: number };
 
   type Props = { utskick: Utskick; onClose: () => void; onDone: () => void };
   let { utskick, onClose, onDone }: Props = $props();
 
   let info = $state<UtskickInfo | null>(null);
   let hoppaOver = $state(true);
+  let inkluderaScrapade = $state(false);
+  let maxScrapadePerBolag = $state(1);
+  let scrapePreview = $state<ScrapePreview | null>(null);
+  let scrapePreviewLoading = $state(false);
   let skickar = $state(false);
   let avbryter = $state(false);
   let avbruten = $state(false);
@@ -20,11 +26,31 @@
   let fel = $state("");
   let klart = $state(false);
   let perMailFel = $state<string[]>([]);
+  let sistaResultat = $state<PostResult | null>(null);
 
   let totalAttSkicka = $derived(info ? (hoppaOver ? info.total - info.reklamsparrade : info.total) : 0);
   let kvarAtSkicka = $derived(info ? Math.max(0, totalAttSkicka - info.skickade) : 0);
 
   let unlistens: (() => void)[] = [];
+
+  async function laddaScrapePreview() {
+    if (!inkluderaScrapade) { scrapePreview = null; return; }
+    scrapePreviewLoading = true;
+    try {
+      const p = await loadPrefs();
+      scrapePreview = await invoke<ScrapePreview>("preview_scraped_emails", {
+        dbPath: p.dbPath, sackId: utskick.sack_id, maxPerBolag: maxScrapadePerBolag,
+      });
+    } finally {
+      scrapePreviewLoading = false;
+    }
+  }
+
+  $effect(() => {
+    // Re-kör förhandsvisningen när checkboxen eller max-antalet ändras.
+    inkluderaScrapade; maxScrapadePerBolag;
+    laddaScrapePreview();
+  });
 
   onMount(async () => {
     info = await invoke<UtskickInfo>("get_utskick_info", { utskickId: utskick.id });
@@ -52,12 +78,16 @@
     skickar = true;
     progress = null;
     perMailFel = [];
+    sistaResultat = null;
     try {
       const p = await loadPrefs();
       if (!p.smtpHost) throw new Error("SMTP ej konfigurerat. Gå till Inställningar.");
-      await invoke("post_utskick", {
+      const result = await invoke<PostResult>("post_utskick", {
         utskickId: utskick.id,
         hoppaOverReklamsparr: hoppaOver,
+        inkluderaScrapade,
+        maxScrapadePerBolag,
+        dbPath: p.dbPath,
         host: p.smtpHost,
         port: p.smtpPort ?? 587,
         encryption: p.smtpEncryption ?? "starttls",
@@ -67,6 +97,7 @@
         fromEmail: p.smtpFromEmail ?? "",
         replyTo: p.smtpReplyTo ?? "",
       });
+      sistaResultat = result;
       if (!avbruten) klart = true;
       info = await invoke<UtskickInfo>("get_utskick_info", { utskickId: utskick.id });
       onDone();
@@ -147,6 +178,43 @@
             </span>
           </label>
         {/if}
+
+        <!-- Scrapade kontaktmail -->
+        <div class="space-y-2 border-t border-zinc-800 pt-3">
+          <label class="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox"
+              bind:checked={inkluderaScrapade}
+              disabled={skickar}
+              class="w-4 h-4 rounded border-zinc-600 bg-zinc-800 accent-white cursor-pointer disabled:cursor-not-allowed"
+            />
+            <span class="text-xs text-zinc-300 group-hover:text-white transition-colors select-none">
+              Maila även scrapade kontaktmail (utöver bolagets huvudmail)
+            </span>
+          </label>
+          {#if inkluderaScrapade}
+            <div class="flex items-center gap-2 pl-7">
+              <span class="text-xs text-zinc-500">Max per bolag</span>
+              <input
+                type="number"
+                min="1"
+                max="5"
+                bind:value={maxScrapadePerBolag}
+                disabled={skickar}
+                class="w-14 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500 disabled:opacity-50"
+              />
+            </div>
+            <div class="pl-7 text-xs">
+              {#if scrapePreviewLoading}
+                <span class="text-zinc-600">Räknar...</span>
+              {:else if scrapePreview}
+                <span class="text-amber-400">
+                  +{scrapePreview.email_count} scrapade mail ({scrapePreview.bolag_count} bolag)
+                </span>
+              {/if}
+            </div>
+          {/if}
+        </div>
       {:else}
         <div class="text-xs text-zinc-600 text-center py-4">Laddar...</div>
       {/if}
@@ -178,6 +246,9 @@
       {#if klart}
         <p class="text-xs text-green-400 bg-green-950/40 border border-green-800/40 rounded px-3 py-2">
           Klart! {info?.skickade ?? ""} mail skickade.
+          {#if sistaResultat && sistaResultat.scraped_sent > 0}
+            Varav {sistaResultat.scraped_sent} till scrapade kontaktmail.
+          {/if}
         </p>
       {/if}
 
