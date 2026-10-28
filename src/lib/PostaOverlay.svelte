@@ -122,12 +122,12 @@
   onclick={onClose}
 >
   <div
-    class="bg-zinc-900 border border-zinc-700 rounded-lg w-[480px] max-w-full mx-4 shadow-2xl"
+    class="bg-zinc-900 border border-zinc-700 rounded-lg w-[480px] max-w-full max-h-[90vh] mx-4 shadow-2xl flex flex-col"
     onclick={(e) => e.stopPropagation()}
     role="presentation"
   >
     <!-- Header -->
-    <div class="px-6 py-4 border-b border-zinc-800 flex items-start justify-between">
+    <div class="px-6 py-4 border-b border-zinc-800 flex items-start justify-between shrink-0">
       <div>
         <p class="text-sm font-medium text-zinc-100">Posta utskick</p>
         <p class="text-xs text-zinc-500 mt-0.5">{utskick.template_namn} → {utskick.sack_namn}</p>
@@ -135,7 +135,7 @@
       <button onclick={onClose} class="text-zinc-500 hover:text-zinc-200 text-sm cursor-pointer ml-4 shrink-0">✕</button>
     </div>
 
-    <div class="px-6 py-5 space-y-5">
+    <div class="px-6 py-5 space-y-5 overflow-y-auto min-h-0">
       <!-- Riskvarning -->
       <div class="bg-amber-950/50 border border-amber-800/60 rounded-md px-4 py-3 text-xs text-amber-300 leading-relaxed">
         <strong>Risk:</strong> Att skicka stora mailvolymer kan leda till att din avsändardomän eller ditt SMTP-konto spärras av spamfilter. Fördröjningen ({utskick.fordrojning_sek}s) minskar risken men eliminerar den inte.
