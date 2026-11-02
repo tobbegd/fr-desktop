@@ -1613,6 +1613,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(CancelSet(std::sync::Mutex::new(std::collections::HashSet::new())))
+        .setup(|app| {
+            use tauri::Manager;
+            let version = app.package_info().version.to_string();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&format!("FDB-Desktop v{}", version));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             verify_license,
             get_db_stats,
